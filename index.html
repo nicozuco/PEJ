@@ -614,6 +614,31 @@ function normalizeTaskBuckets(tasks){
     changed:true,
   };
 }
+function readLSJSON(key,def=null){
+  try{
+    const s=localStorage.getItem(key);
+    return s&&s!=='undefined'?JSON.parse(s):def;
+  }catch{return def;}
+}
+function notifyLSKey(key){
+  try{window.dispatchEvent(new CustomEvent('zp-ls',{detail:{key}}));}catch{}
+}
+function taskStorageKey(dateKeyValue){
+  return`zp_tasks_${dateKeyValue}`;
+}
+function readTasksForDate(dateKeyValue){
+  return normalizeTaskBuckets(readLSJSON(taskStorageKey(dateKeyValue),DEF_TASKS)||DEF_TASKS).tasks;
+}
+function writeTasksForDate(dateKeyValue,updater){
+  const key=taskStorageKey(dateKeyValue);
+  const current=readTasksForDate(dateKeyValue);
+  const nextRaw=typeof updater==='function'?updater(current):updater;
+  const normalized=normalizeTaskBuckets(nextRaw).tasks;
+  try{localStorage.setItem(key,JSON.stringify(normalized));}catch{}
+  pushRemote(key);
+  notifyLSKey(key);
+  return normalized;
+}
 
 // ── Rollover: pull undone tasks from previous days into today ─────────────────
 // Called at module load (sync, so useLS sees correct state) AND after the
@@ -1842,6 +1867,7 @@ function CalendarioScreen({calEvents,setCalEvents}){
   const[selDay,setSelDay]=useState(d.getDate());
   const[vm,setVm]=useState({y:d.getFullYear(),m:d.getMonth()});
   const[adding,setAdding]=useState(false);
+  const[addingTask,setAddingTask]=useState(false);
   const[editingId,setEditingId]=useState('');
   const[editingBaseKey,setEditingBaseKey]=useState('');
   const[newTime,setNewTime]=useState('');
@@ -1850,12 +1876,15 @@ function CalendarioScreen({calEvents,setCalEvents}){
   const[newRemind,setNewRemind]=useState(false);
   const[newRepeatUnit,setNewRepeatUnit]=useState('none');
   const[newRepeatEvery,setNewRepeatEvery]=useState(1);
+  const[newTaskText,setNewTaskText]=useState('');
+  const[newTaskLane,setNewTaskLane]=useState('enfoque');
   const[editTime,setEditTime]=useState('');
   const[editTitle,setEditTitle]=useState('');
   const[editColor,setEditColor]=useState('#3B82F6');
   const[editRemind,setEditRemind]=useState(false);
   const[editRepeatUnit,setEditRepeatUnit]=useState('none');
   const[editRepeatEvery,setEditRepeatEvery]=useState(1);
+  const[taskVersion,setTaskVersion]=useState(0);
   const[notifPermission,setNotifPermission]=useState(typeof Notification!=='undefined'?Notification.permission:'unsupported');
   const[pushSubscribed,setPushSubscribed]=useState(false);
   const[pushBusy,setPushBusy]=useState(false);
@@ -1874,7 +1903,6 @@ function CalendarioScreen({calEvents,setCalEvents}){
     window.addEventListener('focus',syncPermission);
     return()=>{cancelled=true;window.removeEventListener('focus',syncPermission);};
   },[]);
-
   const firstDay=new Date(y,m,1);
   const daysInMonth=new Date(y,m+1,0).getDate();
   const firstOffset=(firstDay.getDay()+6)%7;
@@ -1889,11 +1917,33 @@ function CalendarioScreen({calEvents,setCalEvents}){
 
   const selKey=dateKey(y,m,selDay);
   const dayEvs=getEventsForDate(calEvents,selKey);
+  const dayTasks=React.useMemo(()=>readTasksForDate(selKey),[selKey,taskVersion]);
+  const allDayTasks=[
+    ...(dayTasks.top3||[]).map(t=>({...t,__lane:'top3'})),
+    ...(dayTasks.enfoque||[]).map(t=>({...t,__lane:'enfoque'})),
+    ...(dayTasks.parking||[]).map(t=>({...t,__lane:'parking'})),
+  ];
   const selLabel=`${DAYS_ES[new Date(y,m,selDay).getDay()].charAt(0).toUpperCase()+
     DAYS_ES[new Date(y,m,selDay).getDay()].slice(1)} ${selDay} ${MONTHS_ES[m]}`;
+  const LANE_META={
+    top3:{label:'Top 3',color:'var(--accent)'},
+    enfoque:{label:'En Foco',color:'var(--sys-purple)'},
+    parking:{label:'Parking',color:'var(--text-3)'},
+  };
+  useEffect(()=>{
+    const syncTasks=e=>{
+      const k=e?.detail?.key;
+      if(!k||k===taskStorageKey(selKey))setTaskVersion(v=>v+1);
+    };
+    window.addEventListener('zp-ls',syncTasks);
+    return()=>window.removeEventListener('zp-ls',syncTasks);
+  },[selKey]);
 
   function resetAddForm(){
     setNewTitle('');setNewTime('');setNewColor('#3B82F6');setNewRemind(false);setNewRepeatUnit('none');setNewRepeatEvery(1);
+  }
+  function resetTaskForm(){
+    setNewTaskText('');setNewTaskLane('enfoque');
   }
   function closeEditor(){
     setEditingId('');setEditingBaseKey('');
@@ -1910,8 +1960,49 @@ function CalendarioScreen({calEvents,setCalEvents}){
     setCalEvents(p=>({...p,[baseKey]:(p[baseKey]||[]).filter(e=>e.id!==id)}));
     if(editingId===id&&editingBaseKey===baseKey)closeEditor();
   }
+  function addAgendaTask(){
+    if(!newTaskText.trim())return;
+    if(newTaskLane==='top3'&&(dayTasks.top3||[]).length>=3){alert('Top 3 solo admite 3 tareas.');return;}
+    const id='t'+Date.now();
+    writeTasksForDate(selKey,prev=>({
+      ...prev,
+      [newTaskLane]:[...(prev[newTaskLane]||[]),{id,text:newTaskText.trim(),done:false,subtasks:[],createdDate:selKey}],
+    }));
+    resetTaskForm();
+    setAddingTask(false);
+    setTaskVersion(v=>v+1);
+  }
+  function toggleAgendaTask(lane,id){
+    writeTasksForDate(selKey,prev=>({
+      ...prev,
+      [lane]:(prev[lane]||[]).map(t=>t.id===id?{...t,done:!t.done}:t),
+    }));
+    setTaskVersion(v=>v+1);
+  }
+  function moveAgendaTask(fromLane,toLane,id){
+    if(fromLane===toLane)return;
+    if(toLane==='top3'&&(dayTasks.top3||[]).length>=3){alert('Top 3 solo admite 3 tareas.');return;}
+    writeTasksForDate(selKey,prev=>{
+      const task=(prev[fromLane]||[]).find(t=>t.id===id);
+      if(!task)return prev;
+      return{
+        ...prev,
+        [fromLane]:(prev[fromLane]||[]).filter(t=>t.id!==id),
+        [toLane]:[task,...(prev[toLane]||[])],
+      };
+    });
+    setTaskVersion(v=>v+1);
+  }
+  function deleteAgendaTask(lane,id){
+    writeTasksForDate(selKey,prev=>({
+      ...prev,
+      [lane]:(prev[lane]||[]).filter(t=>t.id!==id),
+    }));
+    setTaskVersion(v=>v+1);
+  }
   function startEditEvent(ev){
     setAdding(false);
+    setAddingTask(false);
     setEditingId(ev.id||'');
     setEditingBaseKey(ev.__baseKey||selKey);
     setEditTime(ev.time||'00:00');
@@ -2002,13 +2093,20 @@ function CalendarioScreen({calEvents,setCalEvents}){
     <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',padding:'0 2px'}}>
       <div>
         <div style={{fontSize:15,fontWeight:600,color:'var(--text-1)',letterSpacing:-0.2}}>{selLabel}</div>
-        <div style={{fontSize:12,color:'var(--text-3)',marginTop:2}}>{dayEvs.length} evento{dayEvs.length!==1?'s':''}</div>
+        <div style={{fontSize:12,color:'var(--text-3)',marginTop:2}}>{dayEvs.length} evento{dayEvs.length!==1?'s':''} · {allDayTasks.length} tarea{allDayTasks.length!==1?'s':''}</div>
       </div>
-      <button onClick={()=>setAdding(v=>!v)} style={{display:'flex',alignItems:'center',gap:6,
-        padding:'7px 14px',borderRadius:14,background:'var(--accent)',color:'#fff',
-        fontSize:13,fontWeight:600}}>
-        <IPlus size={14}/> Añadir
-      </button>
+      <div style={{display:'flex',alignItems:'center',gap:8}}>
+        <button onClick={()=>{setAddingTask(false);setAdding(v=>!v);}} style={{display:'flex',alignItems:'center',gap:6,
+          padding:'7px 14px',borderRadius:14,background:'var(--accent)',color:'#fff',
+          fontSize:13,fontWeight:600}}>
+          <IPlus size={14}/> Evento
+        </button>
+        <button onClick={()=>{setAdding(false);closeEditor();setAddingTask(v=>!v);}} style={{display:'flex',alignItems:'center',gap:6,
+          padding:'7px 14px',borderRadius:14,background:'var(--fill-1)',color:'var(--text-2)',
+          fontSize:13,fontWeight:600}}>
+          <IPlus size={14}/> Tarea
+        </button>
+      </div>
     </div>
     <div style={{display:'flex',alignItems:'center',gap:8,flexWrap:'wrap',padding:'0 2px'}}>
       <Chip tint={pushSubscribed?'var(--sys-green)':notifPermission==='denied'?'var(--sys-red)':'var(--sys-amber)'}>
@@ -2072,6 +2170,28 @@ function CalendarioScreen({calEvents,setCalEvents}){
           background:'var(--fill-1)',fontSize:13,color:'var(--text-3)',fontWeight:500}}>Cancelar</button>
         <button onClick={addEvent} style={{padding:'7px 14px',borderRadius:10,
           background:'var(--accent)',color:'#fff',fontSize:13,fontWeight:600}}>Guardar</button>
+      </div>
+    </Card>}
+
+    {addingTask&&<Card radius={16} padding={14}>
+      <div style={{fontSize:13,fontWeight:700,color:'var(--text-1)',marginBottom:10}}>Tarea para {selLabel.toLowerCase()}</div>
+      <div style={{display:isD?'grid':'grid',gridTemplateColumns:isD?'1fr 120px auto':'1fr',gap:8,marginBottom:10}}>
+        <input value={newTaskText} onChange={e=>setNewTaskText(e.target.value)}
+          onKeyDown={e=>e.key==='Enter'&&addAgendaTask()} placeholder="Qué quieres tener listo ese día…"
+          style={{width:'100%',fontSize:14,color:'var(--text-1)',background:'var(--fill-1)',
+            border:'0.5px solid var(--hairline)',borderRadius:8,padding:'9px 10px'}}/>
+        <select value={newTaskLane} onChange={e=>setNewTaskLane(e.target.value)}
+          style={{width:'100%',fontSize:14,color:'var(--text-1)',background:'var(--fill-1)',
+            border:'0.5px solid var(--hairline)',borderRadius:8,padding:'9px 10px',fontFamily:'inherit'}}>
+          <option value="top3">Top 3</option>
+          <option value="enfoque">En Foco</option>
+          <option value="parking">Parking</option>
+        </select>
+        <button onClick={addAgendaTask} style={{padding:'9px 14px',borderRadius:10,background:'var(--accent)',color:'#fff',
+          fontSize:13,fontWeight:600,whiteSpace:'nowrap'}}>Guardar tarea</button>
+      </div>
+      <div style={{fontSize:11,color:'var(--text-3)'}}>
+        Si la guardas para mañana, mañana te saldrá en tu vista de tareas automáticamente.
       </div>
     </Card>}
 
@@ -2148,6 +2268,46 @@ function CalendarioScreen({calEvents,setCalEvents}){
             display:'flex',alignItems:'center',justifyContent:'center',
             color:'var(--text-3)',flexShrink:0}}><IClose size={12}/></button>
       </div>)}
+    </Card>
+
+    <Card padding={0} radius={22}>
+      <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',padding:'14px 16px 10px'}}>
+        <div style={{fontSize:15,fontWeight:600,color:'var(--text-1)',letterSpacing:-0.2}}>Tareas del día</div>
+        <Chip tint="var(--sys-indigo)">{allDayTasks.length}</Chip>
+      </div>
+      {allDayTasks.length===0&&!addingTask&&<div style={{padding:'0 16px 22px',textAlign:'center',
+        fontSize:14,color:'var(--text-3)',fontStyle:'italic'}}>Sin tareas programadas para este día</div>}
+      {allDayTasks.map((t,i)=>{
+        const laneMeta=LANE_META[t.__lane]||LANE_META.enfoque;
+        return<div key={t.id} style={{display:'flex',gap:12,padding:'13px 16px',
+          borderTop:i>0?'0.5px solid var(--separator)':'none',alignItems:'center'}}>
+          <div onClick={()=>toggleAgendaTask(t.__lane,t.id)} style={{width:20,height:20,borderRadius:10,flexShrink:0,cursor:'pointer',
+            border:t.done?'none':`1.5px solid ${laneMeta.color}55`,background:t.done?laneMeta.color:'transparent',
+            display:'flex',alignItems:'center',justifyContent:'center',color:'#fff'}}>
+            {t.done&&<ICheck size={12}/>}
+          </div>
+          <div style={{flex:1,minWidth:0}}>
+            <div style={{display:'flex',alignItems:'center',gap:6,flexWrap:'wrap',marginBottom:2}}>
+              <Chip tint={laneMeta.color} style={{fontSize:10,padding:'2px 7px'}}>{laneMeta.label}</Chip>
+            </div>
+            <div style={{fontSize:15,fontWeight:500,color:t.done?'var(--text-3)':'var(--text-1)',
+              textDecoration:t.done?'line-through':'none',letterSpacing:-0.2}}>{t.text}</div>
+          </div>
+          <select value={t.__lane} onChange={e=>moveAgendaTask(t.__lane,e.target.value,t.id)}
+            style={{flexShrink:0,maxWidth:isD?94:82,padding:isD?'4px 20px 4px 8px':'3px 18px 3px 7px',
+              borderRadius:7,border:'none',background:'var(--fill-1)',color:'var(--text-2)',
+              fontSize:isD?11.5:11,fontWeight:600,outline:'none',cursor:'pointer',appearance:'none',
+              WebkitAppearance:'none',MozAppearance:'none'}}>
+            <option value="top3">Top 3</option>
+            <option value="enfoque">En Foco</option>
+            <option value="parking">Parking</option>
+          </select>
+          <button onClick={()=>deleteAgendaTask(t.__lane,t.id)}
+            style={{width:26,height:26,borderRadius:13,background:'var(--fill-1)',
+              display:'flex',alignItems:'center',justifyContent:'center',
+              color:'var(--text-3)',flexShrink:0}}><IClose size={12}/></button>
+        </div>;
+      })}
     </Card>
   </div>;
 
