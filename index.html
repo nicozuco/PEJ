@@ -1840,12 +1840,20 @@ function CalendarioScreen({calEvents,setCalEvents}){
   const[selDay,setSelDay]=useState(d.getDate());
   const[vm,setVm]=useState({y:d.getFullYear(),m:d.getMonth()});
   const[adding,setAdding]=useState(false);
+  const[editingId,setEditingId]=useState('');
+  const[editingBaseKey,setEditingBaseKey]=useState('');
   const[newTime,setNewTime]=useState('');
   const[newTitle,setNewTitle]=useState('');
   const[newColor,setNewColor]=useState('#3B82F6');
   const[newRemind,setNewRemind]=useState(false);
   const[newRepeatUnit,setNewRepeatUnit]=useState('none');
   const[newRepeatEvery,setNewRepeatEvery]=useState(1);
+  const[editTime,setEditTime]=useState('');
+  const[editTitle,setEditTitle]=useState('');
+  const[editColor,setEditColor]=useState('#3B82F6');
+  const[editRemind,setEditRemind]=useState(false);
+  const[editRepeatUnit,setEditRepeatUnit]=useState('none');
+  const[editRepeatEvery,setEditRepeatEvery]=useState(1);
   const[notifPermission,setNotifPermission]=useState(typeof Notification!=='undefined'?Notification.permission:'unsupported');
   const[pushSubscribed,setPushSubscribed]=useState(false);
   const[pushBusy,setPushBusy]=useState(false);
@@ -1882,15 +1890,45 @@ function CalendarioScreen({calEvents,setCalEvents}){
   const selLabel=`${DAYS_ES[new Date(y,m,selDay).getDay()].charAt(0).toUpperCase()+
     DAYS_ES[new Date(y,m,selDay).getDay()].slice(1)} ${selDay} ${MONTHS_ES[m]}`;
 
+  function resetAddForm(){
+    setNewTitle('');setNewTime('');setNewColor('#3B82F6');setNewRemind(false);setNewRepeatUnit('none');setNewRepeatEvery(1);
+  }
+  function closeEditor(){
+    setEditingId('');setEditingBaseKey('');
+    setEditTitle('');setEditTime('');setEditColor('#3B82F6');setEditRemind(false);setEditRepeatUnit('none');setEditRepeatEvery(1);
+  }
   function addEvent(){
     if(!newTitle.trim())return;
     const ev={id:'ev'+Date.now(),time:newTime||'00:00',title:newTitle.trim(),color:newColor,
       remind:newRemind,repeatUnit:newRepeatUnit,repeatEvery:newRepeatUnit==='none'?1:Math.max(1,parseInt(newRepeatEvery,10)||1)};
     setCalEvents(p=>({...p,[selKey]:[...(p[selKey]||[]),ev]}));
-    setNewTitle('');setNewTime('');setNewColor('#3B82F6');setNewRemind(false);setNewRepeatUnit('none');setNewRepeatEvery(1);setAdding(false);
+    resetAddForm();setAdding(false);
   }
   function deleteEvent(baseKey,id){
     setCalEvents(p=>({...p,[baseKey]:(p[baseKey]||[]).filter(e=>e.id!==id)}));
+    if(editingId===id&&editingBaseKey===baseKey)closeEditor();
+  }
+  function startEditEvent(ev){
+    setAdding(false);
+    setEditingId(ev.id||'');
+    setEditingBaseKey(ev.__baseKey||selKey);
+    setEditTime(ev.time||'00:00');
+    setEditTitle(ev.title||'');
+    setEditColor(ev.color||'#3B82F6');
+    setEditRemind(!!ev.remind);
+    setEditRepeatUnit(ev.repeatUnit||'none');
+    setEditRepeatEvery(Math.max(1,parseInt(ev.repeatEvery,10)||1));
+  }
+  function saveEditEvent(){
+    if(!editingId||!editingBaseKey||!editTitle.trim())return;
+    const nextEvery=editRepeatUnit==='none'?1:Math.max(1,parseInt(editRepeatEvery,10)||1);
+    setCalEvents(p=>({
+      ...p,
+      [editingBaseKey]:(p[editingBaseKey]||[]).map(ev=>ev.id===editingId
+        ?{...ev,time:editTime||'00:00',title:editTitle.trim(),color:editColor,remind:editRemind,repeatUnit:editRepeatUnit,repeatEvery:nextEvery}
+        :ev)
+    }));
+    closeEditor();
   }
   async function enableNotifications(){
     setPushBusy(true);setPushMsg('');
@@ -2028,10 +2066,60 @@ function CalendarioScreen({calEvents,setCalEvents}){
         {newRepeatUnit==='none'?'Evento único':repeatSummary({repeatUnit:newRepeatUnit,repeatEvery:newRepeatEvery})}
       </div>
       <div style={{display:'flex',gap:8,justifyContent:'flex-end'}}>
-        <button onClick={()=>setAdding(false)} style={{padding:'7px 14px',borderRadius:10,
+        <button onClick={()=>{resetAddForm();setAdding(false);}} style={{padding:'7px 14px',borderRadius:10,
           background:'var(--fill-1)',fontSize:13,color:'var(--text-3)',fontWeight:500}}>Cancelar</button>
         <button onClick={addEvent} style={{padding:'7px 14px',borderRadius:10,
           background:'var(--accent)',color:'#fff',fontSize:13,fontWeight:600}}>Guardar</button>
+      </div>
+    </Card>}
+
+    {!!editingId&&<Card radius={16} padding={14}>
+      <div style={{fontSize:13,fontWeight:700,color:'var(--text-1)',marginBottom:10}}>Editar recordatorio</div>
+      <div style={{display:isD?'flex':'grid',gridTemplateColumns:isD?undefined:'100px 1fr',gap:8,marginBottom:10}}>
+        <input value={editTime} onChange={e=>setEditTime(e.target.value)} type="time"
+          style={{width:100,fontSize:14,color:'var(--text-1)',background:'var(--fill-1)',
+            border:'0.5px solid var(--hairline)',borderRadius:8,padding:'7px 10px'}}/>
+        <input value={editTitle} onChange={e=>setEditTitle(e.target.value)}
+          onKeyDown={e=>e.key==='Enter'&&saveEditEvent()} placeholder="Título del evento…"
+          style={{flex:1,fontSize:14,color:'var(--text-1)',background:'var(--fill-1)',
+            border:'0.5px solid var(--hairline)',borderRadius:8,padding:'7px 10px'}}/>
+      </div>
+      <div style={{display:'flex',gap:8,marginBottom:12}}>
+        {EVENT_COLORS.map(ec=><button key={`edit-${ec.id}`} onClick={()=>setEditColor(ec.hex)}
+          style={{width:26,height:26,borderRadius:13,background:ec.hex,
+            boxShadow:editColor===ec.hex?`0 0 0 2.5px var(--surface-1),0 0 0 4.5px ${ec.hex}`:'none',
+            display:'flex',alignItems:'center',justifyContent:'center'}}>
+          {editColor===ec.hex&&<ICheck size={13} style={{color:'#fff'}}/>}
+        </button>)}
+      </div>
+      <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',gap:10,marginBottom:10}}>
+        <div>
+          <div style={{fontSize:13,fontWeight:600,color:'var(--text-1)'}}>Recordatorio</div>
+          <div style={{fontSize:11,color:'var(--text-3)',marginTop:2}}>Puedes ajustar la hora y si mantiene aviso.</div>
+        </div>
+        <Toggle value={editRemind} onChange={setEditRemind}/>
+      </div>
+      <div style={{display:'grid',gridTemplateColumns:isD?'90px 120px 1fr':'84px 110px 1fr',gap:8,marginBottom:12}}>
+        <input type="number" min="1" value={editRepeatUnit==='none'?1:editRepeatEvery}
+          onChange={e=>setEditRepeatEvery(Math.max(1,parseInt(e.target.value,10)||1))}
+          disabled={editRepeatUnit==='none'}
+          style={{width:'100%',fontSize:14,color:'var(--text-1)',background:editRepeatUnit==='none'?'var(--fill-1)':'var(--surface-1)',
+            border:'0.5px solid var(--hairline)',borderRadius:8,padding:'7px 10px',fontFamily:'inherit'}}/>
+        <div style={{display:'flex',alignItems:'center',fontSize:12,color:'var(--text-3)',fontWeight:600}}>Cada</div>
+        <select value={editRepeatUnit} onChange={e=>setEditRepeatUnit(e.target.value)}
+          style={{width:'100%',fontSize:14,color:'var(--text-1)',background:'var(--fill-1)',
+            border:'0.5px solid var(--hairline)',borderRadius:8,padding:'7px 10px',fontFamily:'inherit'}}>
+          {REPEAT_UNITS.map(opt=><option key={`edit-${opt.id}`} value={opt.id}>{opt.label}</option>)}
+        </select>
+      </div>
+      <div style={{fontSize:11,color:'var(--text-3)',marginBottom:12}}>
+        {editRepeatUnit==='none'?'Evento único':repeatSummary({repeatUnit:editRepeatUnit,repeatEvery:editRepeatEvery})}
+      </div>
+      <div style={{display:'flex',gap:8,justifyContent:'flex-end'}}>
+        <button onClick={closeEditor} style={{padding:'7px 14px',borderRadius:10,
+          background:'var(--fill-1)',fontSize:13,color:'var(--text-3)',fontWeight:500}}>Cancelar</button>
+        <button onClick={saveEditEvent} style={{padding:'7px 14px',borderRadius:10,
+          background:'var(--accent)',color:'#fff',fontSize:13,fontWeight:600}}>Guardar cambios</button>
       </div>
     </Card>}
 
@@ -2049,6 +2137,10 @@ function CalendarioScreen({calEvents,setCalEvents}){
           </div>
           <div style={{fontSize:15,fontWeight:500,color:'var(--text-1)',letterSpacing:-0.2}}>{e.title}</div>
         </div>
+        <button onClick={()=>startEditEvent(e)}
+          style={{padding:'0 10px',height:26,borderRadius:13,background:'var(--fill-1)',
+            display:'flex',alignItems:'center',justifyContent:'center',
+            color:'var(--text-2)',flexShrink:0,fontSize:11,fontWeight:600}}>Editar</button>
         <button onClick={()=>deleteEvent(e.__baseKey,e.id)}
           style={{width:26,height:26,borderRadius:13,background:'var(--fill-1)',
             display:'flex',alignItems:'center',justifyContent:'center',
