@@ -6,7 +6,7 @@
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover"/>
 <meta name="apple-mobile-web-app-capable" content="yes"/>
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent"/>
-<link rel="manifest" href="/manifest.webmanifest"/>
+<link rel="manifest" href="manifest.webmanifest"/>
 <style>
 :root {
   --accent:#3B82F6; --accent-soft:rgba(59,130,246,0.12); --accent-soft-strong:rgba(59,130,246,0.28);
@@ -87,6 +87,8 @@ const SUPABASE_URL='https://xrtvyidrcmakqvbxuhwr.supabase.co';
 const SUPABASE_KEY='sb_publishable_Qasm0vE4Gm6m76VVOG2sww_D-f-t9fE';
 const PUSH_SUBSCRIPTIONS_FN='zuppej-push-reminders';
 const SEND_REMINDERS_FN='send-calendar-reminders';
+const APP_BASE_URL=new URL('./',window.location.href);
+const SW_URL=new URL('sw.js',APP_BASE_URL).href;
 const sb=window.supabase.createClient(SUPABASE_URL,SUPABASE_KEY,{
   auth:{persistSession:true,autoRefreshToken:true,detectSessionInUrl:true,
     storage:window.localStorage,storageKey:'zp_auth'}
@@ -105,7 +107,7 @@ function pushSupported(){
 }
 async function getPushStatus(){
   if(!pushSupported())return{supported:false,permission:typeof Notification!=='undefined'?Notification.permission:'unsupported',subscribed:false};
-  const reg=await navigator.serviceWorker.getRegistration('/sw.js')||await navigator.serviceWorker.getRegistration();
+  const reg=await navigator.serviceWorker.getRegistration();
   const sub=reg?await reg.pushManager.getSubscription():null;
   return{supported:true,permission:Notification.permission,subscribed:!!sub};
 }
@@ -125,7 +127,7 @@ async function registerPushSubscription(){
   if(permission!=='granted')throw new Error('Permiso de notificaciones denegado.');
   const cfg=await fetchPushConfig(session.access_token);
   if(!cfg?.vapidPublicKey)throw new Error('Push no está configurado todavía en el servidor.');
-  const reg=await navigator.serviceWorker.register('/sw.js');
+  const reg=await navigator.serviceWorker.register(SW_URL);
   await navigator.serviceWorker.ready;
   let sub=await reg.pushManager.getSubscription();
   if(!sub){
@@ -146,7 +148,7 @@ async function unregisterPushSubscription(){
   if(!pushSupported())return{subscribed:false};
   const{data:{session}}=await sb.auth.getSession();
   if(!session)throw new Error('Necesitas iniciar sesión.');
-  const reg=await navigator.serviceWorker.getRegistration('/sw.js')||await navigator.serviceWorker.getRegistration();
+  const reg=await navigator.serviceWorker.getRegistration();
   const sub=reg?await reg.pushManager.getSubscription():null;
   if(sub){
     try{
