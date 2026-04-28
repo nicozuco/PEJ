@@ -7,6 +7,8 @@ self.addEventListener('push', event => {
   }
   const appUrl = new URL('./', self.registration.scope).href;
   const iconUrl = new URL('icon.svg', self.registration.scope).href;
+  const appUrl = new URL('./', self.registration.scope).href;
+  const iconUrl = new URL('icon.svg', self.registration.scope).href;
   const title = data.title || 'ZUPPEJ';
   const options = {
     body: data.body || '',
