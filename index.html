@@ -67,7 +67,7 @@ input,textarea{font-family:inherit;outline:none}
 @media(max-width:767px){
   .zp-main{position:relative}
   .zp-tabbar{position:absolute;left:0;right:0;bottom:0}
-  .zp-page{padding-bottom:calc(86px + env(safe-area-inset-bottom,0px)) !important}
+  .zp-page{padding-bottom:calc(96px + env(safe-area-inset-bottom,0px)) !important}
 }
 @media(min-width:768px){
   .zp-screen-wrap{max-width:var(--content-max);width:100%;margin:0 auto;flex:1 1 auto;display:flex;flex-direction:column;min-height:0;min-width:0;align-self:stretch}
@@ -952,20 +952,20 @@ function Sidebar({current,onChange,streak,onSettings,dark,user}){
 
 // ── Bottom Tab Bar (mobile) ───────────────────────────────────────────────────
 function TabBar({current,onChange,dark}){
-  return<div className="zp-tabbar" style={{padding:'0 12px',
-    paddingBottom:'calc(10px + env(safe-area-inset-bottom,0px))'}}>
-    <div className="zp-tabbar-glass" style={{padding:'5px 4px'}}>
+  return<div className="zp-tabbar" style={{padding:'0 10px',
+    paddingBottom:'calc(4px + env(safe-area-inset-bottom,0px))'}}>
+    <div className="zp-tabbar-glass" style={{padding:'7px 5px',borderRadius:26}}>
       <div style={{display:'flex',justifyContent:'space-around',position:'relative',zIndex:1}}>
         {TABS.map(it=>{
           const active=it.id===current;
           const Icon=active?it.A:it.I;
           return<button key={it.id} onClick={()=>onChange(it.id)}
-            style={{flex:1,minWidth:0,display:'flex',flexDirection:'column',alignItems:'center',gap:2,
-              padding:'5px 2px 3px',color:active?'var(--accent)':'var(--text-3)',
+            style={{flex:1,minWidth:0,display:'flex',flexDirection:'column',alignItems:'center',gap:3,
+              padding:'6px 2px 4px',color:active?'var(--accent)':'var(--text-3)',
               transition:'color 0.15s ease'}}>
-            <div style={{height:22,display:'flex',alignItems:'center',justifyContent:'center',
-              transform:active?'translateY(-0.5px)':'none'}}><Icon size={21}/></div>
-            <span style={{fontSize:10,fontWeight:active?600:500,letterSpacing:0.05,
+            <div style={{height:24,display:'flex',alignItems:'center',justifyContent:'center',
+              transform:active?'translateY(-0.5px)':'none'}}><Icon size={22}/></div>
+            <span style={{fontSize:10.8,fontWeight:active?600:500,letterSpacing:0.04,
               color:active?'var(--accent)':'var(--text-3)'}}>{it.label}</span>
           </button>;
         })}
