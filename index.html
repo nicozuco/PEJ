@@ -89,8 +89,6 @@ const PUSH_SUBSCRIPTIONS_FN='zuppej-push-reminders';
 const SEND_REMINDERS_FN='send-calendar-reminders';
 const APP_BASE_URL=new URL('./',window.location.href);
 const SW_URL=new URL('sw.js',APP_BASE_URL).href;
-const APP_BASE_URL=new URL('./',window.location.href);
-const SW_URL=new URL('sw.js',APP_BASE_URL).href;
 const sb=window.supabase.createClient(SUPABASE_URL,SUPABASE_KEY,{
   auth:{persistSession:true,autoRefreshToken:true,detectSessionInUrl:true,
     storage:window.localStorage,storageKey:'zp_auth'}
