@@ -6,7 +6,9 @@
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover"/>
 <meta name="apple-mobile-web-app-capable" content="yes"/>
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent"/>
-<link rel="manifest" href="manifest.webmanifest?v=20260428b"/>
+<link rel="manifest" href="manifest.webmanifest?v=20260428c"/>
+<link rel="apple-touch-icon" href="apple-touch-icon.png?v=20260428c"/>
+<meta name="apple-mobile-web-app-title" content="Zuppi's Agenda"/>
 <style>
 :root {
   --accent:#3B82F6; --accent-soft:rgba(59,130,246,0.12); --accent-soft-strong:rgba(59,130,246,0.28);
@@ -87,7 +89,7 @@ const SUPABASE_URL='https://xrtvyidrcmakqvbxuhwr.supabase.co';
 const SUPABASE_KEY='sb_publishable_Qasm0vE4Gm6m76VVOG2sww_D-f-t9fE';
 const PUSH_SUBSCRIPTIONS_FN='zuppej-push-reminders';
 const SEND_REMINDERS_FN='send-calendar-reminders';
-const APP_ASSET_VERSION='20260428b';
+const APP_ASSET_VERSION='20260428c';
 const APP_BASE_URL=new URL('./',window.location.href);
 const SW_URL=new URL(`sw.js?v=${APP_ASSET_VERSION}`,APP_BASE_URL).href;
 const sb=window.supabase.createClient(SUPABASE_URL,SUPABASE_KEY,{
