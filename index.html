@@ -224,8 +224,11 @@ function buildSyncPayload(){
     if(k==='zp_theme')settings.theme=v;
     else if(k==='zp_accent')settings.accent=v;
     else if(k==='zp_streak')settings.streak=v;
+    else if(k==='zp_habit_template')settings.habitTemplate=v;
     else if(k==='zp_twelve')twelve=v||{};
+    else if(k===TASK_DELETES_KEY)journal.taskDeletes=v||{};
     else if(k==='zp_ideas')journal.ideas=v;
+    else if(k==='zp_library')journal.library=v;
     else if(k==='zp_cal_events')journal.calEvents=v;
     else if(k==='zp_day_types')journal.dayTypes=v;
     else if(k.startsWith('zp_habits_'))habits[k.slice(10)]=v;
@@ -238,27 +241,140 @@ function buildSyncPayload(){
   return{habits,journal,settings,twelve};
 }
 
-// Apply remote row to localStorage. Keys present in `dirty` are skipped
-// (they have local-only changes that haven't been pushed yet, so we don't
-// want to clobber them with stale remote data).
+function readSyncLocal(key,def=null){
+  try{
+    const raw=localStorage.getItem(key);
+    return raw&&raw!=='undefined'?JSON.parse(raw):def;
+  }catch{return def;}
+}
+
+function mergeArrayById(remoteValue,localValue){
+  if(!Array.isArray(remoteValue))return Array.isArray(localValue)?localValue:remoteValue;
+  if(!Array.isArray(localValue))return remoteValue;
+  const remoteById=new Map(remoteValue.filter(x=>x&&x.id).map(x=>[String(x.id),x]));
+  const seen=new Set();
+  const out=[];
+  for(const item of localValue){
+    if(!item||!item.id){out.push(item);continue;}
+    const id=String(item.id);
+    seen.add(id);
+    out.push(remoteById.has(id)?{...remoteById.get(id),...item}:item);
+  }
+  for(const item of remoteValue){
+    if(item&&item.id&&seen.has(String(item.id)))continue;
+    out.push(item);
+  }
+  return out;
+}
+
+function taskTime(item){
+  const t=Date.parse(item?.updatedAt||item?.createdAt||'');
+  return Number.isFinite(t)?t:0;
+}
+function taskDeleteMap(){
+  return readSyncLocal(TASK_DELETES_KEY,{})||{};
+}
+function isTaskDeleted(item){
+  if(!item||!item.id)return false;
+  const deletedAt=Date.parse(taskDeleteMap()[item.id]||'');
+  return Number.isFinite(deletedAt)&&deletedAt>0&&deletedAt>=taskTime(item);
+}
+function taskLaneRank(lane){
+  return lane==='top3'?3:lane==='parking'?2:lane==='enfoque'?1:0;
+}
+function mergeTaskBuckets(remoteValue,localValue){
+  const lanes=['top3','enfoque','parking'];
+  const empty={top3:[],enfoque:[],parking:[]};
+  const remote=normalizeTaskBuckets(remoteValue||empty).tasks;
+  const local=normalizeTaskBuckets(localValue||empty).tasks;
+  const merged={top3:[],enfoque:[],parking:[]};
+  const byId=new Map();
+  const loose=[];
+  const take=(item,lane,source)=>{
+    if(!item||isTaskDeleted(item))return;
+    if(!item.id){loose.push({item,lane});return;}
+    const id=String(item.id);
+    const prev=byId.get(id);
+    const incomingTime=taskTime(item);
+    const prevTime=prev?taskTime(prev.item):0;
+    const localLaneBeatsRemoteLane=source==='local'&&prev?.source==='remote'&&lane!==prev.lane;
+    const localLaneConflict=source==='local'&&prev?.source==='local'&&lane!==prev.lane;
+    const localLaneWins=localLaneConflict&&(
+      taskLaneRank(lane)>taskLaneRank(prev.lane)||
+      (taskLaneRank(lane)===taskLaneRank(prev.lane)&&incomingTime>prevTime)
+    );
+    const canUseTime=!localLaneConflict;
+    if(!prev||localLaneBeatsRemoteLane||localLaneWins||(canUseTime&&incomingTime>prevTime)||(source==='local'&&incomingTime===prevTime&&lane===prev.lane)){
+      byId.set(id,{item,lane,source});
+    }
+  };
+  lanes.forEach(lane=>(remote[lane]||[]).forEach(item=>take(item,lane,'remote')));
+  lanes.forEach(lane=>(local[lane]||[]).forEach(item=>take(item,lane,'local')));
+  loose.forEach(({item,lane})=>merged[lane].push(item));
+  byId.forEach(({item,lane})=>merged[lane].push(item));
+  return normalizeTaskBuckets(merged).tasks;
+}
+
+function tasksHaveAny(value){
+  const t=normalizeTaskBuckets(value||{top3:[],enfoque:[],parking:[]}).tasks;
+  return ['top3','enfoque','parking'].some(l=>(t[l]||[]).some(item=>item&&!isTaskDeleted(item)));
+}
+function taskBucketsEqual(a,b){
+  return JSON.stringify(normalizeTaskBuckets(a||{top3:[],enfoque:[],parking:[]}).tasks)===
+    JSON.stringify(normalizeTaskBuckets(b||{top3:[],enfoque:[],parking:[]}).tasks);
+}
+function localTaskKeys(){
+  const keys=[];
+  for(let i=0;i<localStorage.length;i++){
+    const k=localStorage.key(i);
+    if(k&&k.startsWith('zp_tasks_'))keys.push(k);
+  }
+  return keys;
+}
+function preserveLocalTasksAfterPull(remoteTasks){
+  const dates=new Set([...Object.keys(remoteTasks||{}),...localTaskKeys().map(k=>k.slice(9))]);
+  let needsPush=false;
+  dates.forEach(d=>{
+    const key='zp_tasks_'+d;
+    const localValue=readSyncLocal(key,null);
+    if(!tasksHaveAny(localValue))return;
+    const remoteValue=(remoteTasks||{})[d]||{top3:[],enfoque:[],parking:[]};
+    if(!taskBucketsEqual(localValue,remoteValue)){__dirtyKeys.add(key);needsPush=true;}
+  });
+  if(needsPush&&!__pushTimer&&!__pushInFlight)__pushTimer=setTimeout(flushPush,100);
+}
+
+// Apply remote row to localStorage. Dirty list-like keys are merged by id so a
+// stale device cannot erase tasks/habits that were added elsewhere while closed.
 function applySyncRow(row,dirty){
   if(!row)return false;
   const s=row.settings||{},h=row.habits||{},j=row.journal||{},tw=row.twelve;
   let changed=false;
   const put=(k,v)=>{
-    if(dirty&&dirty.has(k))return;
-    const next=JSON.stringify(v);
+    let nextValue=v;
+    if(k.startsWith('zp_tasks_')){
+      const localValue=readSyncLocal(k,null);
+      if(localValue)nextValue=mergeTaskBuckets(v,localValue);
+    }else if(dirty&&dirty.has(k)){
+      const localValue=readSyncLocal(k);
+      if(k.startsWith('zp_habits_')||k.startsWith('zp_mental_')||k.startsWith('zp_cierre_'))nextValue=mergeArrayById(v,localValue);
+      else return;
+    }
+    const next=JSON.stringify(nextValue);
     if(localStorage.getItem(k)===next)return;
     try{localStorage.setItem(k,next);changed=true;window.dispatchEvent(new CustomEvent('zp-ls',{detail:{key:k}}));}catch{}
   };
   if(s.theme!==undefined)put('zp_theme',s.theme);
   if(s.accent!==undefined)put('zp_accent',s.accent);
   if(s.streak!==undefined)put('zp_streak',s.streak);
+  if(s.habitTemplate!==undefined)put('zp_habit_template',s.habitTemplate);
   if(tw&&Object.keys(tw).length>0)put('zp_twelve',tw);
   for(const[d,v]of Object.entries(h))put('zp_habits_'+d,v);
   if(j.ideas!==undefined)put('zp_ideas',j.ideas);
+  if(j.library!==undefined)put('zp_library',j.library);
   if(j.calEvents!==undefined)put('zp_cal_events',j.calEvents);
   if(j.dayTypes!==undefined)put('zp_day_types',j.dayTypes);
+  if(j.taskDeletes!==undefined)put(TASK_DELETES_KEY,j.taskDeletes);
   if(j.tasks)for(const[d,v]of Object.entries(j.tasks))put('zp_tasks_'+d,v);
   if(j.mental)for(const[d,v]of Object.entries(j.mental))put('zp_mental_'+d,v);
   if(j.cierre)for(const[d,v]of Object.entries(j.cierre))put('zp_cierre_'+d,v);
@@ -338,6 +454,7 @@ async function pullAllRemote(userId){
       return{ok:true,changed:false};
     }
     const changed=applySyncRow(data,__dirtyKeys);
+    preserveLocalTasksAfterPull(data.journal?.tasks||{});
     __lastRemoteUpdatedAt=data.updated_at||__lastRemoteUpdatedAt;
     try{if(data.updated_at)localStorage.setItem('zp_last_sync',data.updated_at);}catch{}
     console.log('[zp sync pull] hydrated, updated_at=',data.updated_at,'changed=',changed);
@@ -461,10 +578,31 @@ function scoreHueSoft(s){if(s==null)return'transparent';if(s>=8)return'var(--sys
 
 // ── Default data ──────────────────────────────────────────────────────────────
 const DEF_HABITS=[];
+const HABIT_TEMPLATE_KEY='zp_habit_template';
+const TASK_DELETES_KEY='zp_task_deletes';
 const DEF_TASKS={top3:[],enfoque:[],parking:[]};
 const DEF_MENTAL=[];
 const DEF_CIERRE=[];
 const DEF_IDEAS=[];
+const DEF_LIBRARY=[];
+function cleanHabitList(habits,{done=false}={}){
+  if(!Array.isArray(habits))return[];
+  const seen=new Set();
+  return habits
+    .filter(h=>h&&h.id&&String(h.name||'').trim())
+    .map(h=>({id:String(h.id),name:String(h.name).trim(),done:!!done}))
+    .filter(h=>{
+      if(seen.has(h.id))return false;
+      seen.add(h.id);
+      return true;
+    });
+}
+function habitTemplateFromDay(habits){
+  return cleanHabitList(habits).map(({id,name})=>({id,name}));
+}
+function habitsFromTemplate(template){
+  return cleanHabitList(template,{done:false});
+}
 const REPEAT_UNITS=[
   {id:'none',label:'No repetir'},
   {id:'hour',label:'Horas'},
@@ -601,12 +739,20 @@ function fireCalendarReminders(calEvents){
   if(changed)saveReminderHistory(history);
 }
 function normalizeTaskBuckets(tasks){
-  const safe={
-    top3:Array.isArray(tasks?.top3)?tasks.top3:[],
-    enfoque:Array.isArray(tasks?.enfoque)?tasks.enfoque:[],
-    parking:Array.isArray(tasks?.parking)?tasks.parking:[],
-  };
-  if(safe.top3.length<=3)return{tasks:safe,changed:false};
+  const lanes=['top3','enfoque','parking'];
+  const safe={top3:[],enfoque:[],parking:[]};
+  let changed=false;
+  lanes.forEach(lane=>{
+    const items=Array.isArray(tasks?.[lane])?tasks[lane]:[];
+    items.forEach(item=>{
+      const explicitLane=lanes.includes(item?.lane)?item.lane:(lanes.includes(item?.__lane)?item.__lane:null);
+      const target=lane==='enfoque'&&explicitLane&&explicitLane!=='enfoque'?explicitLane:lane;
+      const nextItem=item&&item.lane===target?item:{...item,lane:target};
+      if(target!==lane||nextItem!==item)changed=true;
+      safe[target].push(nextItem);
+    });
+  });
+  if(safe.top3.length<=3)return{tasks:safe,changed};
   const keep=safe.top3.slice(0,3);
   const overflow=safe.top3.slice(3);
   return{
@@ -628,6 +774,20 @@ function taskStorageKey(dateKeyValue){
 }
 function readTasksForDate(dateKeyValue){
   return normalizeTaskBuckets(readLSJSON(taskStorageKey(dateKeyValue),DEF_TASKS)||DEF_TASKS).tasks;
+}
+function taskNow(){return new Date().toISOString();}
+function touchTask(task,lane){
+  return{...task,...(lane?{lane}:{}),updatedAt:taskNow()};
+}
+function makeTask(id,text,createdDate,lane){
+  return{id,text,done:false,subtasks:[],createdDate,...(lane?{lane}:{}),updatedAt:taskNow()};
+}
+function recordTaskDelete(id){
+  if(!id)return;
+  const deletes=readLSJSON(TASK_DELETES_KEY,{})||{};
+  deletes[id]=taskNow();
+  try{localStorage.setItem(TASK_DELETES_KEY,JSON.stringify(deletes));}catch{}
+  pushRemote(TASK_DELETES_KEY);
 }
 function writeTasksForDate(dateKeyValue,updater){
   const key=taskStorageKey(dateKeyValue);
@@ -710,6 +870,8 @@ const IDoce=p=><IB {...p}><circle cx="12" cy="12" r="8.5"/><circle cx="12" cy="1
 const IDoceF=p=><svg width={p?.size||22} height={p?.size||22} viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="12" r="9" opacity="0.35"/><circle cx="12" cy="12" r="5.5" opacity="0.6"/><circle cx="12" cy="12" r="2.2"/></svg>;
 const IIdeas=p=><IB {...p}><path d="M9.2 16.5V18.3c0 .6.5 1.2 1.2 1.2h3.2c.7 0 1.2-.5 1.2-1.2V16.5"/><path d="M10 21.5h4"/><path d="M12 3.5a6 6 0 0 0-3.6 10.8c.5.4.8 1 .8 1.7v.5h5.6v-.5c0-.7.3-1.3.8-1.7A6 6 0 0 0 12 3.5z"/></IB>;
 const IIdeasF=p=><svg width={p?.size||22} height={p?.size||22} viewBox="0 0 24 24" fill="currentColor"><path d="M12 3.5a6 6 0 0 0-3.6 10.8c.5.4.8 1 .8 1.7v.5h5.6v-.5c0-.7.3-1.3.8-1.7A6 6 0 0 0 12 3.5z"/><rect x="9" y="17" width="6" height="2.5" rx="1.2" opacity="0.6"/><rect x="10" y="20" width="4" height="1.6" rx="0.8" opacity="0.4"/></svg>;
+const IContent=p=><IB {...p}><rect x="4" y="5" width="16" height="14" rx="2.8"/><path d="M10 9l5 3-5 3z" fill="currentColor" stroke="none"/><path d="M7 21h10"/></IB>;
+const IContentF=p=><svg width={p?.size||22} height={p?.size||22} viewBox="0 0 24 24" fill="currentColor"><rect x="3.5" y="5" width="17" height="14" rx="3"/><path d="M10 9l5.5 3-5.5 3.1z" fill="#fff" opacity="0.92"/><rect x="7" y="20.2" width="10" height="1.4" rx="0.7" opacity="0.45"/></svg>;
 const IPlus=p=><IB {...p} sw={2}><path d="M12 5v14M5 12h14"/></IB>;
 const IChev=p=><IB {...p}><path d="M9 5l7 7-7 7"/></IB>;
 const ICheck=p=><IB {...p} sw={2.4}><path d="M4.5 12.5l5 5 10-11"/></IB>;
@@ -875,6 +1037,7 @@ const TABS=[
   {id:'calendario',label:'Agenda',A:ICalF,I:ICal},
   {id:'doce',label:'12 sem',A:IDoceF,I:IDoce},
   {id:'ideas',label:'Ideas',A:IIdeasF,I:IIdeas},
+  {id:'contenido',label:'Contenido',A:IContentF,I:IContent},
 ];
 
 function userDisplayName(user){
@@ -975,7 +1138,7 @@ function TabBar({current,onChange,dark}){
 }
 
 // ── HOY ───────────────────────────────────────────────────────────────────────
-function HoyScreen({habits,setHabits,tasks,setTasks,mental,setMental,cierre,setCierre,streak,onSettings}){
+function HoyScreen({habits,setHabits,setHabitTemplate,tasks,setTasks,mental,setMental,cierre,setCierre,streak,onSettings}){
   const isD=useD();
   const[tab,setTab]=useLS('zp_hoy_tab','dashboard');
   const score=useMemo(()=>calcScore(habits,tasks,mental),[habits,tasks,mental]);
@@ -1005,7 +1168,7 @@ function HoyScreen({habits,setHabits,tasks,setTasks,mental,setMental,cierre,setC
     <div className="scroll zp-page" style={{flex:1,minHeight:0,paddingBottom:8}}>
       {tab==='dashboard'&&<HoyDashboard score={score} habits={habits} setHabits={setHabits} tasks={tasks} setTasks={setTasks} mental={mental} streak={streak}/>}
       {tab==='tareas'&&<HoyTareas tasks={tasks} setTasks={setTasks}/>}
-      {tab==='habitos'&&<HoyHabitos habits={habits} setHabits={setHabits}/>}
+      {tab==='habitos'&&<HoyHabitos habits={habits} setHabits={setHabits} setHabitTemplate={setHabitTemplate}/>}
       {tab==='mental'&&<HoyMental mental={mental} setMental={setMental}/>}
       {tab==='cierre'&&<HoyCierre cierre={cierre} setCierre={setCierre}/>}
     </div>
@@ -1072,7 +1235,7 @@ function HoyDashboard({score,habits,setHabits,tasks,setTasks,mental,streak}){
         const subsDone=subs.filter(s=>s.done).length;
         return<div key={t.id}
           style={{padding:isD?'13px 0':'8px 0',borderTop:i>0?'0.5px solid var(--separator)':'none'}}>
-          <div onClick={()=>setTasks(prev=>({...prev,top3:prev.top3.map(x=>x.id===t.id?{...x,done:!x.done}:x)}))}
+          <div onClick={()=>setTasks(prev=>({...prev,top3:prev.top3.map(x=>x.id===t.id?touchTask({...x,done:!x.done},'top3'):x)}))}
             style={{display:'flex',alignItems:'center',gap:12,cursor:'pointer'}}>
             <div style={{width:isD?24:22,height:isD?24:22,borderRadius:12,flexShrink:0,
               border:t.done?'none':'1.5px solid var(--separator-strong)',
@@ -1095,7 +1258,7 @@ function HoyDashboard({score,habits,setHabits,tasks,setTasks,mental,streak}){
           {subs.length>0&&<div style={{paddingLeft:isD?36:34,paddingTop:8,display:'flex',flexDirection:'column',gap:6}}>
             {subs.map(s=><div key={s.id} onClick={e=>{
                 e.stopPropagation();
-                setTasks(prev=>({...prev,top3:prev.top3.map(x=>x.id===t.id?{...x,subtasks:(x.subtasks||[]).map(y=>y.id===s.id?{...y,done:!y.done}:y)}:x)}));
+                setTasks(prev=>({...prev,top3:prev.top3.map(x=>x.id===t.id?touchTask({...x,subtasks:(x.subtasks||[]).map(y=>y.id===s.id?{...y,done:!y.done}:y)},'top3'):x)}));
               }}
               style={{display:'flex',alignItems:'center',gap:8,cursor:'pointer'}}>
               <div style={{width:isD?16:15,height:isD?16:15,borderRadius:999,flexShrink:0,
@@ -1180,6 +1343,8 @@ function HoyTareas({tasks,setTasks}){
   const isD=useD();
   const[newTask,setNewTask]=useLS('zp_draft_task','');
   const[newLane,setNewLane]=useLS('zp_draft_lane','enfoque');
+  const newLaneRef=useRef(newLane);
+  useEffect(()=>{newLaneRef.current=newLane;},[newLane]);
   const taskDates=React.useMemo(()=>{try{const s=localStorage.getItem('zp_task_dates');return s?JSON.parse(s):{};}catch{return{};}},[]); // registry safe from Supabase overwrite
   const[editTask,setEditTask]=useState({lane:null,id:null,val:''});
   const[expanded,setExpanded]=useState({});
@@ -1196,11 +1361,13 @@ function HoyTareas({tasks,setTasks}){
   const completedTasks=React.useMemo(()=>LANES.flatMap(l=>(tasks[l.id]||[])
     .filter(t=>t.done)
     .map(t=>({...t,__lane:l.id,__laneLabel:l.label,__laneColor:l.color}))),[tasks]);
-  function toggleTask(lane,id){setTasks(prev=>({...prev,[lane]:(prev[lane]||[]).map(t=>t.id===id?{...t,done:!t.done}:t)}));}
+  function toggleTask(lane,id){setTasks(prev=>({...prev,[lane]:(prev[lane]||[]).map(t=>t.id===id?touchTask({...t,done:!t.done},lane):t)}));}
+  function chooseNewLane(lane){newLaneRef.current=lane;setNewLane(lane);}
   function addTask(){if(!newTask.trim())return;
-    if(newLane==='top3'&&(activeTasks.top3||[]).length>=3){alert('Top 3 solo admite 3 tareas pendientes.');return;}
+    const lane=newLaneRef.current||newLane||'enfoque';
+    if(lane==='top3'&&(activeTasks.top3||[]).length>=3){alert('Top 3 solo admite 3 tareas pendientes.');return;}
     const id='t'+Date.now();
-    setTasks(prev=>({...prev,[newLane]:[...prev[newLane],{id,text:newTask.trim(),done:false,subtasks:[],createdDate:TODAY_KEY}]}));setNewTask('');}
+    setTasks(prev=>({...prev,[lane]:[...(prev[lane]||[]),makeTask(id,newTask.trim(),TODAY_KEY,lane)]}));setNewTask('');}
   function moveTask(fromLane,toLane,id){
     if(fromLane===toLane)return;
     const currentTask=(tasks[fromLane]||[]).find(t=>t.id===id);
@@ -1212,27 +1379,27 @@ function HoyTareas({tasks,setTasks}){
       return{
         ...prev,
         [fromLane]:(prev[fromLane]||[]).filter(t=>t.id!==id),
-        [toLane]:[task,...(prev[toLane]||[])],
+        [toLane]:[touchTask(task,toLane),...(prev[toLane]||[])],
       };
     });
     if(editTask.id===id)setEditTask(ev=>({...ev,lane:toLane}));
   }
-  function deleteTask(lane,id){setTasks(prev=>({...prev,[lane]:prev[lane].filter(t=>t.id!==id)}));}
+  function deleteTask(lane,id){recordTaskDelete(id);setTasks(prev=>({...prev,[lane]:prev[lane].filter(t=>t.id!==id)}));}
   function startEdit(lane,id,text){setEditTask({lane,id,val:text});}
   function commitEdit(){
     if(!editTask.id)return;
     if(editTask.val.trim())
-      setTasks(prev=>({...prev,[editTask.lane]:prev[editTask.lane].map(t=>t.id===editTask.id?{...t,text:editTask.val.trim()}:t)}));
+      setTasks(prev=>({...prev,[editTask.lane]:prev[editTask.lane].map(t=>t.id===editTask.id?touchTask({...t,text:editTask.val.trim()},editTask.lane):t)}));
     else
-      setTasks(prev=>({...prev,[editTask.lane]:prev[editTask.lane].filter(t=>t.id!==editTask.id)}));
+      {recordTaskDelete(editTask.id);setTasks(prev=>({...prev,[editTask.lane]:prev[editTask.lane].filter(t=>t.id!==editTask.id)}));}
     setEditTask({lane:null,id:null,val:''});
   }
-  function toggleSub(lane,tid,sid){setTasks(prev=>({...prev,[lane]:prev[lane].map(t=>t.id===tid?{...t,subtasks:(t.subtasks||[]).map(s=>s.id===sid?{...s,done:!s.done}:s)}:t)}));}
+  function toggleSub(lane,tid,sid){setTasks(prev=>({...prev,[lane]:prev[lane].map(t=>t.id===tid?touchTask({...t,subtasks:(t.subtasks||[]).map(s=>s.id===sid?{...s,done:!s.done}:s)},lane):t)}));}
   function addSub(lane,tid){const text=(newSub[tid]||'').trim();if(!text)return;
     const id='s'+Date.now();
-    setTasks(prev=>({...prev,[lane]:prev[lane].map(t=>t.id===tid?{...t,subtasks:[...(t.subtasks||[]),{id,text,done:false}]}:t)}));
+    setTasks(prev=>({...prev,[lane]:prev[lane].map(t=>t.id===tid?touchTask({...t,subtasks:[...(t.subtasks||[]),{id,text,done:false}]},lane):t)}));
     setNewSub(prev=>({...prev,[tid]:''}));}
-  function deleteSub(lane,tid,sid){setTasks(prev=>({...prev,[lane]:prev[lane].map(t=>t.id===tid?{...t,subtasks:(t.subtasks||[]).filter(s=>s.id!==sid)}:t)}));}
+  function deleteSub(lane,tid,sid){setTasks(prev=>({...prev,[lane]:prev[lane].map(t=>t.id===tid?touchTask({...t,subtasks:(t.subtasks||[]).filter(s=>s.id!==sid)},lane):t)}));}
   function toggleExpand(id){setExpanded(prev=>({...prev,[id]:!prev[id]}));}
   const px=isD?52:14;
 
@@ -1314,7 +1481,7 @@ function HoyTareas({tasks,setTasks}){
         color:'#fff',fontSize:12,fontWeight:600,border:'none',cursor:'pointer'}}>Añadir</button>
     </div>
     <div style={{display:'flex',gap:2,padding:'8px 10px'}}>
-      {LANES.map(l=><button key={l.id} onClick={()=>setNewLane(l.id)} style={{flex:1,padding:'5px 8px',
+      {LANES.map(l=><button key={l.id} onClick={()=>chooseNewLane(l.id)} style={{flex:1,padding:'5px 8px',
         borderRadius:8,fontSize:12,border:'none',cursor:'pointer',
         background:newLane===l.id?'var(--accent)':'var(--fill-1)',
         color:newLane===l.id?'#fff':'var(--text-3)',fontWeight:newLane===l.id?600:500}}>{l.label}</button>)}
@@ -1380,17 +1547,21 @@ function HoyTareas({tasks,setTasks}){
   </div>;
 }
 
-function HoyHabitos({habits,setHabits}){
+function HoyHabitos({habits,setHabits,setHabitTemplate}){
   const isD=useD();
   const[newName,setNewName]=useState('');
   const doneH=habits.filter(h=>h.done).length;
   const pct=habits.length>0?Math.round(doneH/habits.length*100):0;
   function toggle(id){setHabits(prev=>prev.map(h=>h.id===id?{...h,done:!h.done}:h));}
   function addHabit(){if(!newName.trim())return;
-    const id='h'+Date.now();
-    setHabits(prev=>[...(prev||[]),{id,name:newName.trim(),done:false}]);
+    const habit={id:'h'+Date.now(),name:newName.trim()};
+    setHabits(prev=>[...(prev||[]),{...habit,done:false}]);
+    setHabitTemplate(prev=>[...habitTemplateFromDay(prev),habit]);
     setNewName('');}
-  function removeHabit(id){setHabits(prev=>prev.filter(h=>h.id!==id));}
+  function removeHabit(id){
+    setHabits(prev=>prev.filter(h=>h.id!==id));
+    setHabitTemplate(prev=>habitTemplateFromDay(prev).filter(h=>h.id!==id));
+  }
   const px=isD?52:14;
   return<div style={{padding:`0 ${px}px`,display:'flex',flexDirection:'column',gap:14}}>
     <div style={{display:isD?'grid':'flex',gridTemplateColumns:isD?'280px 1fr':undefined,flexDirection:'column',gap:14,alignItems:isD?'start':'stretch'}}>
@@ -1635,14 +1806,24 @@ function SemanalScreen(){
   const best=evalD.length>0?Math.max(...evalD.map(d=>d.score)):null;
   const bestDay=best!=null?DAYS.find(d=>d.score===best):null;
   const daysGE8=evalD.filter(d=>d.score>=8).length;
-  const todayHabits=readLS('zp_habits_'+TODAY_KEY)||[];
-  const habits=todayHabits.map(h=>{
-    let done=0;
+  const weekHabitMap=new Map();
+  DAYS.forEach(day=>{
+    const dh=readLS('zp_habits_'+day.key);
+    if(Array.isArray(dh))dh.forEach(h=>{
+      if(h&&h.id&&h.name&&!weekHabitMap.has(h.id))weekHabitMap.set(h.id,{id:h.id,name:h.name});
+    });
+  });
+  if(weekHabitMap.size===0)habitTemplateFromDay(readLS(HABIT_TEMPLATE_KEY)||[]).forEach(h=>weekHabitMap.set(h.id,h));
+  const habits=Array.from(weekHabitMap.values()).map(h=>{
+    let done=0,total=0;
     DAYS.forEach(day=>{
       const dh=readLS('zp_habits_'+day.key);
-      if(Array.isArray(dh)){const m=dh.find(x=>x.id===h.id||x.name===h.name);if(m&&m.done)done++;}
+      if(Array.isArray(dh)){
+        const m=dh.find(x=>x.id===h.id||x.name===h.name);
+        if(m){total++;if(m.done)done++;}
+      }
     });
-    return{name:h.name,done,total:7};
+    return{name:h.name,done,total:total||7};
   });
   const px=isD?52:14;
   const MES=['ene','feb','mar','abr','may','jun','jul','ago','sep','oct','nov','dic'];
@@ -1992,7 +2173,7 @@ function CalendarioScreen({calEvents,setCalEvents}){
     const id='t'+Date.now();
     writeTasksForDate(selKey,prev=>({
       ...prev,
-      [newTaskLane]:[...(prev[newTaskLane]||[]),{id,text:newTaskText.trim(),done:false,subtasks:[],createdDate:selKey}],
+      [newTaskLane]:[...(prev[newTaskLane]||[]),makeTask(id,newTaskText.trim(),selKey,newTaskLane)],
     }));
     resetTaskForm();
     setAddingTask(false);
@@ -2001,7 +2182,7 @@ function CalendarioScreen({calEvents,setCalEvents}){
   function toggleAgendaTask(lane,id){
     writeTasksForDate(selKey,prev=>({
       ...prev,
-      [lane]:(prev[lane]||[]).map(t=>t.id===id?{...t,done:!t.done}:t),
+      [lane]:(prev[lane]||[]).map(t=>t.id===id?touchTask({...t,done:!t.done},lane):t),
     }));
     setTaskVersion(v=>v+1);
   }
@@ -2014,12 +2195,13 @@ function CalendarioScreen({calEvents,setCalEvents}){
       return{
         ...prev,
         [fromLane]:(prev[fromLane]||[]).filter(t=>t.id!==id),
-        [toLane]:[task,...(prev[toLane]||[])],
+        [toLane]:[touchTask(task,toLane),...(prev[toLane]||[])],
       };
     });
     setTaskVersion(v=>v+1);
   }
   function deleteAgendaTask(lane,id){
+    recordTaskDelete(id);
     writeTasksForDate(selKey,prev=>({
       ...prev,
       [lane]:(prev[lane]||[]).filter(t=>t.id!==id),
@@ -2676,6 +2858,196 @@ function IdeasScreen({ideas,setIdeas}){
   </div>;
 }
 
+// ── CONTENIDO ────────────────────────────────────────────────────────────────
+const CONTENT_TYPES=[
+  {id:'video',label:'Video',color:'var(--sys-red)'},
+  {id:'articulo',label:'Artículo',color:'var(--accent)'},
+  {id:'podcast',label:'Podcast',color:'var(--sys-purple)'},
+  {id:'curso',label:'Curso',color:'var(--sys-green)'},
+  {id:'otro',label:'Otro',color:'var(--text-3)'},
+];
+const CONTENT_STATUS=[
+  {id:'pendiente',label:'Pendiente',color:'var(--sys-amber)'},
+  {id:'visto',label:'Visto',color:'var(--sys-green)'},
+  {id:'favorito',label:'Favorito',color:'var(--sys-red)'},
+];
+function contentHost(url){
+  try{return new URL(url).hostname.replace(/^www\./,'');}catch{return'';}
+}
+function inferContentType(url){
+  const h=contentHost(url);
+  if(/youtube|youtu\.be|tiktok|vimeo|instagram/.test(h))return'video';
+  if(/spotify|podcasts|ivoox|apple/.test(h))return'podcast';
+  if(/udemy|coursera|domestika|skillshare/.test(h))return'curso';
+  return'articulo';
+}
+function normalizeUrl(url){
+  const v=(url||'').trim();
+  if(!v)return'';
+  if(/^https?:\/\//i.test(v))return v;
+  return`https://${v}`;
+}
+function ContentScreen({library,setLibrary}){
+  const isD=useD();
+  const[adding,setAdding]=useState(false);
+  const[filter,setFilter]=useState('todos');
+  const[url,setUrl]=useState('');
+  const[title,setTitle]=useState('');
+  const[topic,setTopic]=useState('');
+  const[note,setNote]=useState('');
+  const[type,setType]=useState('video');
+  const[tags,setTags]=useState('');
+  const px=isD?52:14;
+  const items=(library||[]).slice().sort((a,b)=>(b.createdAt||0)-(a.createdAt||0));
+  const topics=Array.from(new Set(items.map(x=>(x.topic||'').trim()).filter(Boolean))).sort((a,b)=>a.localeCompare(b,'es'));
+  const shown=filter==='todos'?items:items.filter(x=>x.type===filter||x.status===filter||`tema:${x.topic}`===filter);
+  const counts={
+    todos:items.length,
+    pendiente:items.filter(x=>x.status!=='visto').length,
+    favorito:items.filter(x=>x.status==='favorito').length,
+    video:items.filter(x=>x.type==='video').length,
+  };
+  function resetForm(){setUrl('');setTitle('');setTopic('');setNote('');setType('video');setTags('');}
+  function addContent(){
+    const cleanUrl=normalizeUrl(url);
+    const cleanTitle=title.trim()||contentHost(cleanUrl)||'Contenido guardado';
+    if(!cleanUrl&&!cleanTitle)return;
+    const finalType=type||inferContentType(cleanUrl);
+    setLibrary(prev=>[{
+      id:'c'+Date.now(),
+      title:cleanTitle,
+      url:cleanUrl,
+      topic:topic.trim(),
+      note:note.trim(),
+      type:finalType,
+      status:'pendiente',
+      tags:tags.split(',').map(t=>t.trim()).filter(Boolean),
+      createdAt:Date.now(),
+    },...(prev||[])]);
+    resetForm();setAdding(false);
+  }
+  function patchItem(id,patch){setLibrary(prev=>(prev||[]).map(x=>x.id===id?{...x,...patch,updatedAt:Date.now()}:x));}
+  function removeItem(id){setLibrary(prev=>(prev||[]).filter(x=>x.id!==id));}
+  function openItem(item){if(item.url)window.open(item.url,'_blank','noopener,noreferrer');}
+
+  const FilterRow=<div style={{display:'flex',gap:8,overflowX:'auto',paddingBottom:2}} className="scroll">
+    {[
+      {id:'todos',label:'Todo',count:counts.todos,color:'var(--accent)'},
+      {id:'pendiente',label:'Pendiente',count:counts.pendiente,color:'var(--sys-amber)'},
+      {id:'favorito',label:'Favoritos',count:counts.favorito,color:'var(--sys-red)'},
+      {id:'video',label:'Videos',count:counts.video,color:'var(--sys-red)'},
+      ...CONTENT_TYPES.filter(t=>t.id!=='video').map(t=>({...t,count:items.filter(x=>x.type===t.id).length})),
+      ...topics.map(t=>({id:`tema:${t}`,label:t,count:items.filter(x=>x.topic===t).length,color:'var(--sys-indigo)'})),
+    ].map(f=><button key={f.id} onClick={()=>setFilter(f.id)}
+      style={{display:'flex',alignItems:'center',gap:7,padding:isD?'7px 12px':'6px 10px',
+        borderRadius:999,background:filter===f.id?f.color:'var(--fill-1)',
+        color:filter===f.id?'#fff':'var(--text-2)',fontSize:isD?13:12,fontWeight:600,whiteSpace:'nowrap'}}>
+      {f.label}<span style={{opacity:filter===f.id?0.85:0.55}}>{f.count}</span>
+    </button>)}
+  </div>;
+
+  const AddCard=adding?<Card radius={18} padding={14}>
+    <div style={{display:'grid',gridTemplateColumns:isD?'1.4fr 1fr 1fr 150px':'1fr',gap:10,marginBottom:10}}>
+      <input value={url} onChange={e=>{setUrl(e.target.value);if(!type)setType(inferContentType(e.target.value));}}
+        onBlur={()=>{if(url&&!title)setType(inferContentType(url));}}
+        placeholder="Pega un enlace…"
+        style={{fontSize:14,color:'var(--text-1)',background:'var(--fill-1)',border:'none',borderRadius:10,padding:'10px 12px'}}/>
+      <input value={title} onChange={e=>setTitle(e.target.value)}
+        onKeyDown={e=>e.key==='Enter'&&addContent()}
+        placeholder="Título"
+        style={{fontSize:14,color:'var(--text-1)',background:'var(--fill-1)',border:'none',borderRadius:10,padding:'10px 12px'}}/>
+      <input value={topic} onChange={e=>setTopic(e.target.value)}
+        onKeyDown={e=>e.key==='Enter'&&addContent()}
+        placeholder="Tema"
+        style={{fontSize:14,color:'var(--text-1)',background:'var(--fill-1)',border:'none',borderRadius:10,padding:'10px 12px'}}/>
+      <select value={type} onChange={e=>setType(e.target.value)}
+        style={{fontSize:14,color:'var(--text-1)',background:'var(--fill-1)',border:'none',borderRadius:10,padding:'10px 12px'}}>
+        {CONTENT_TYPES.map(t=><option key={t.id} value={t.id}>{t.label}</option>)}
+      </select>
+    </div>
+    <textarea value={note} onChange={e=>setNote(e.target.value)}
+      placeholder="Nota rápida…"
+      style={{width:'100%',minHeight:70,fontSize:13,color:'var(--text-1)',background:'var(--fill-1)',border:'none',
+        borderRadius:10,padding:'10px 12px',resize:'vertical',marginBottom:10}}/>
+    <div style={{display:'flex',gap:8,alignItems:'center'}}>
+      <input value={tags} onChange={e=>setTags(e.target.value)} placeholder="Tags separados por coma"
+        style={{flex:1,fontSize:13,color:'var(--text-1)',background:'transparent',border:'none'}}/>
+      <button onClick={()=>{resetForm();setAdding(false);}} style={{padding:'7px 13px',borderRadius:10,background:'var(--fill-1)',fontSize:13,color:'var(--text-3)',fontWeight:600}}>Cancelar</button>
+      <button onClick={addContent} style={{padding:'7px 13px',borderRadius:10,background:'var(--accent)',color:'#fff',fontSize:13,fontWeight:600}}>Guardar</button>
+    </div>
+  </Card>:<button onClick={()=>setAdding(true)}
+    style={{display:'flex',alignItems:'center',gap:10,padding:'12px 16px',borderRadius:16,
+      background:'var(--fill-1)',border:'0.5px solid var(--hairline)',width:'100%',textAlign:'left'}}>
+    <span style={{color:'var(--accent)'}}><IContent size={18}/></span>
+    <span style={{flex:1,fontSize:14,color:'var(--text-3)',letterSpacing:-0.1}}>Guardar video, artículo o enlace…</span>
+    <span style={{color:'var(--text-3)'}}><IPlus size={16}/></span>
+  </button>;
+
+  const ItemList=<Card padding={0} radius={20}>
+    {shown.length===0&&<div style={{padding:'28px',textAlign:'center',fontSize:13,color:'var(--text-3)',fontStyle:'italic'}}>
+      No hay contenido en esta vista.
+    </div>}
+    {shown.map((item,i)=>{
+      const typeMeta=CONTENT_TYPES.find(t=>t.id===item.type)||CONTENT_TYPES[4];
+      const statusMeta=CONTENT_STATUS.find(s=>s.id===item.status)||CONTENT_STATUS[0];
+      return<div key={item.id} style={{padding:isD?'14px 18px':'12px 14px',borderTop:i>0?'0.5px solid var(--separator)':'none'}}>
+        <div style={{display:'flex',gap:12,alignItems:'flex-start'}}>
+          <button onClick={()=>openItem(item)} style={{width:38,height:38,borderRadius:11,background:`${typeMeta.color}22`,
+            color:typeMeta.color,display:'flex',alignItems:'center',justifyContent:'center',flexShrink:0}}>
+            <IContent size={19}/>
+          </button>
+          <div style={{flex:1,minWidth:0}}>
+            <div onClick={()=>openItem(item)} style={{fontSize:isD?15:14,fontWeight:700,color:'var(--text-1)',letterSpacing:-0.25,
+              lineHeight:1.3,cursor:item.url?'pointer':'default'}}>{item.title}</div>
+            <div style={{display:'flex',gap:6,alignItems:'center',flexWrap:'wrap',marginTop:6}}>
+              <Chip tint={typeMeta.color}>{typeMeta.label}</Chip>
+              <Chip tint={statusMeta.color}>{statusMeta.label}</Chip>
+              {item.topic&&<Chip tint="var(--sys-indigo)">{item.topic}</Chip>}
+              {item.url&&<span style={{fontSize:11,color:'var(--text-3)'}}>{contentHost(item.url)}</span>}
+            </div>
+            {item.note&&<div style={{fontSize:12.5,color:'var(--text-2)',lineHeight:1.45,marginTop:8}}>{item.note}</div>}
+            {Array.isArray(item.tags)&&item.tags.length>0&&<div style={{display:'flex',gap:5,flexWrap:'wrap',marginTop:8}}>
+              {item.tags.map(t=><span key={t} style={{fontSize:10.5,color:'var(--text-3)',background:'var(--fill-1)',borderRadius:999,padding:'2px 7px'}}>{t}</span>)}
+            </div>}
+          </div>
+          <div style={{display:'flex',gap:5,flexShrink:0}}>
+            <button onClick={()=>patchItem(item.id,{status:item.status==='visto'?'pendiente':'visto'})}
+              style={{width:28,height:28,borderRadius:14,background:'var(--fill-1)',color:item.status==='visto'?'var(--sys-green)':'var(--text-3)',display:'flex',alignItems:'center',justifyContent:'center'}}>
+              <ICheck size={14}/>
+            </button>
+            <button onClick={()=>patchItem(item.id,{status:item.status==='favorito'?'pendiente':'favorito'})}
+              style={{width:28,height:28,borderRadius:14,background:'var(--fill-1)',color:item.status==='favorito'?'var(--sys-red)':'var(--text-3)',fontSize:14,fontWeight:700}}>★</button>
+            <button onClick={()=>removeItem(item.id)}
+              style={{width:28,height:28,borderRadius:14,background:'var(--fill-1)',color:'var(--text-3)',display:'flex',alignItems:'center',justifyContent:'center'}}>
+              <IClose size={12}/>
+            </button>
+          </div>
+        </div>
+      </div>;
+    })}
+  </Card>;
+
+  return<div style={{display:'flex',flexDirection:'column',flex:1,minHeight:0,height:'100%'}}>
+    <NavHeader eyebrow="CONTENIDO" title="Biblioteca" subtitle={`${items.length} guardados`}/>
+    <div className="scroll zp-page" style={{flex:1,minHeight:0,paddingBottom:14}}>
+      <div style={{padding:`0 ${px}px`,display:'flex',flexDirection:'column',gap:isD?14:10}}>
+        <div style={{display:isD?'grid':'flex',gridTemplateColumns:isD?'1fr 240px':undefined,flexDirection:'column',gap:isD?14:10}}>
+          <div style={{display:'flex',flexDirection:'column',gap:isD?14:10}}>
+            {AddCard}
+            {FilterRow}
+            {ItemList}
+          </div>
+          {isD&&<div style={{display:'flex',flexDirection:'column',gap:10}}>
+            <MetricTile label="Pendiente" value={counts.pendiente} color="var(--sys-amber)"/>
+            <MetricTile label="Favoritos" value={counts.favorito} color="var(--sys-red)"/>
+            <MetricTile label="Videos" value={counts.video} color="var(--accent)"/>
+          </div>}
+        </div>
+      </div>
+    </div>
+  </div>;
+}
+
 // ── AJUSTES ───────────────────────────────────────────────────────────────────
 const ACCENT_OPTIONS=[
   {id:'blue',c:'#3B82F6'},{id:'indigo',c:'#6366F1'},{id:'violet',c:'#8B5CF6'},
@@ -3279,18 +3651,30 @@ function App(){
 
 function AppContent({user,isDesktop,dark,theme,setTheme,accent,setAccent,onSignOut,signingOut}){
   const[tab,setTab]=useLS('zp_tab','hoy');
-  const[habits,setHabits]=useLS('zp_habits_'+TODAY_KEY,DEF_HABITS);
+  const initialHabitTemplate=readSyncLocal(HABIT_TEMPLATE_KEY,DEF_HABITS);
+  const initialTodayHabits=readSyncLocal('zp_habits_'+TODAY_KEY,null);
+  const[habitTemplate,setHabitTemplate]=useLS(HABIT_TEMPLATE_KEY,habitTemplateFromDay(initialHabitTemplate));
+  const[habits,setHabits]=useLS('zp_habits_'+TODAY_KEY,initialTodayHabits||habitsFromTemplate(initialHabitTemplate));
   const[tasks,setTasks]=useLS('zp_tasks_'+TODAY_KEY,DEF_TASKS);
   const[mental,setMental]=useLS('zp_mental_'+TODAY_KEY,DEF_MENTAL);
   const[cierre,setCierre]=useLS('zp_cierre_'+TODAY_KEY,DEF_CIERRE);
   const[ideas,setIdeas]=useLS('zp_ideas',DEF_IDEAS);
+  const[library,setLibrary]=useLS('zp_library',DEF_LIBRARY);
   const[streak]=useLS('zp_streak',0);
   const[calEvents,setCalEvents]=useLS('zp_cal_events',DEF_CAL_EVENTS);
   const[dayTypes,setDayTypes]=useLS('zp_day_types',{});
   const[showSettings,setShowSettings]=useState(false);
 
-  const screenProps={habits,setHabits,tasks,setTasks,mental,setMental,cierre,setCierre,streak,ideas,setIdeas,
+  const screenProps={habits,setHabits,setHabitTemplate,tasks,setTasks,mental,setMental,cierre,setCierre,streak,ideas,setIdeas,library,setLibrary,
     theme,setTheme,accent,setAccent};
+
+  useEffect(()=>{
+    const todayKey='zp_habits_'+TODAY_KEY;
+    const hasToday=localStorage.getItem(todayKey)!==null;
+    const hasTemplate=localStorage.getItem(HABIT_TEMPLATE_KEY)!==null;
+    if(!hasTemplate&&hasToday)setHabitTemplate(habitTemplateFromDay(habits));
+    if(!hasToday&&Array.isArray(habitTemplate)&&habitTemplate.length>0)setHabits(habitsFromTemplate(habitTemplate));
+  },[habitTemplate]);
 
   useEffect(()=>{
     const normalized=normalizeTaskBuckets(tasks);
@@ -3320,6 +3704,7 @@ function AppContent({user,isDesktop,dark,theme,setTheme,accent,setAccent,onSignO
     :tab==='calendario'?<CalendarioScreen calEvents={calEvents} setCalEvents={setCalEvents}/>
     :tab==='doce'?<DoceScreen/>
     :tab==='ideas'?<IdeasScreen ideas={ideas} setIdeas={setIdeas}/>
+    :tab==='contenido'?<ContentScreen library={library} setLibrary={setLibrary}/>
     :null;
 
   return(
