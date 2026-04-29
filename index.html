@@ -1189,14 +1189,23 @@ function HoyTareas({tasks,setTasks}){
     {id:'enfoque',label:'En Foco',desc:'',color:'var(--sys-purple)'},
     {id:'parking',label:'Parking',desc:'',color:'var(--text-3)'},
   ];
-  function toggleTask(lane,id){setTasks(prev=>({...prev,[lane]:prev[lane].map(t=>t.id===id?{...t,done:!t.done}:t)}));}
+  const activeTasks=React.useMemo(()=>LANES.reduce((acc,l)=>{
+    acc[l.id]=(tasks[l.id]||[]).filter(t=>!t.done);
+    return acc;
+  },{}),[tasks]);
+  const completedTasks=React.useMemo(()=>LANES.flatMap(l=>(tasks[l.id]||[])
+    .filter(t=>t.done)
+    .map(t=>({...t,__lane:l.id,__laneLabel:l.label,__laneColor:l.color}))),[tasks]);
+  function toggleTask(lane,id){setTasks(prev=>({...prev,[lane]:(prev[lane]||[]).map(t=>t.id===id?{...t,done:!t.done}:t)}));}
   function addTask(){if(!newTask.trim())return;
-    if(newLane==='top3'&&(tasks.top3||[]).length>=3){alert('Top 3 solo admite 3 tareas.');return;}
+    if(newLane==='top3'&&(activeTasks.top3||[]).length>=3){alert('Top 3 solo admite 3 tareas pendientes.');return;}
     const id='t'+Date.now();
     setTasks(prev=>({...prev,[newLane]:[...prev[newLane],{id,text:newTask.trim(),done:false,subtasks:[],createdDate:TODAY_KEY}]}));setNewTask('');}
   function moveTask(fromLane,toLane,id){
     if(fromLane===toLane)return;
-    if(toLane==='top3'&&(tasks.top3||[]).length>=3){alert('Top 3 solo admite 3 tareas.');return;}
+    const currentTask=(tasks[fromLane]||[]).find(t=>t.id===id);
+    if(!currentTask)return;
+    if(toLane==='top3'&&!currentTask.done&&(activeTasks.top3||[]).length>=3){alert('Top 3 solo admite 3 tareas pendientes.');return;}
     setTasks(prev=>{
       const task=(prev[fromLane]||[]).find(t=>t.id===id);
       if(!task)return prev;
@@ -1312,6 +1321,21 @@ function HoyTareas({tasks,setTasks}){
     </div>
   </Card>;
 
+  const CompletedCard=<Card padding={0} radius={isD?20:22}>
+    <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',padding:isD?'14px 16px 8px':'14px 18px 8px'}}>
+      <div style={{display:'flex',alignItems:'center',gap:8}}>
+        <div style={{width:isD?8:6,height:isD?8:6,borderRadius:4,background:'var(--sys-green)'}}/>
+        <div style={{fontSize:isD?14:15,fontWeight:600,color:'var(--text-1)',letterSpacing:-0.2}}>Completadas</div>
+      </div>
+      <div style={{fontSize:12,color:'var(--text-3)'}}>{completedTasks.length}</div>
+    </div>
+    <div style={{padding:isD?'0 4px 8px':'0 6px 8px'}}>
+      {completedTasks.length===0&&<div style={{textAlign:'center',padding:isD?'20px 0':'14px 0',
+        fontSize:13,color:'var(--text-3)',fontStyle:'italic'}}>Sin tareas completadas</div>}
+      {completedTasks.map(t=>renderTask(t,t.__lane,t.__laneColor))}
+    </div>
+  </Card>;
+
   if(isD){
     return<div style={{padding:`0 ${px}px`}}>
       <div style={{marginBottom:16}}>{AddCard}</div>
@@ -1323,15 +1347,16 @@ function HoyTareas({tasks,setTasks}){
               <div style={{fontSize:14,fontWeight:600,color:'var(--text-1)',letterSpacing:-0.2}}>{lane.label}</div>
               {lane.desc&&<span style={{fontSize:11,color:'var(--text-3)'}}>{lane.desc}</span>}
             </div>
-            <span style={{fontSize:12,color:'var(--text-3)'}}>{tasks[lane.id].length}</span>
+            <span style={{fontSize:12,color:'var(--text-3)'}}>{activeTasks[lane.id].length}</span>
           </div>
           <div style={{padding:'0 4px 8px'}}>
-            {tasks[lane.id].length===0&&<div style={{textAlign:'center',padding:'20px 0',
+            {activeTasks[lane.id].length===0&&<div style={{textAlign:'center',padding:'20px 0',
               fontSize:13,color:'var(--text-3)',fontStyle:'italic'}}>Sin tareas</div>}
-            {tasks[lane.id].map(t=>renderTask(t,lane.id,lane.color))}
+            {activeTasks[lane.id].map(t=>renderTask(t,lane.id,lane.color))}
           </div>
         </Card>)}
       </div>
+      <div style={{marginTop:16}}>{CompletedCard}</div>
     </div>;
   }
   return<div style={{padding:'0 16px',display:'flex',flexDirection:'column',gap:14}}>
@@ -1343,14 +1368,15 @@ function HoyTareas({tasks,setTasks}){
           <div style={{fontSize:15,fontWeight:600,color:'var(--text-1)',letterSpacing:-0.2}}>{lane.label}</div>
           {lane.desc&&<span style={{fontSize:11,color:'var(--text-3)'}}>{lane.desc}</span>}
         </div>
-        <div style={{fontSize:12,color:'var(--text-3)'}}>{tasks[lane.id].length}</div>
+        <div style={{fontSize:12,color:'var(--text-3)'}}>{activeTasks[lane.id].length}</div>
       </div>
       <div style={{padding:'0 6px 8px'}}>
-        {tasks[lane.id].length===0&&<div style={{textAlign:'center',padding:'14px 0',
+        {activeTasks[lane.id].length===0&&<div style={{textAlign:'center',padding:'14px 0',
           fontSize:13,color:'var(--text-3)',fontStyle:'italic'}}>Sin tareas</div>}
-        {tasks[lane.id].map(t=>renderTask(t,lane.id,lane.color))}
+        {activeTasks[lane.id].map(t=>renderTask(t,lane.id,lane.color))}
       </div>
     </Card>)}
+    {CompletedCard}
   </div>;
 }
 
