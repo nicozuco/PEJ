@@ -230,6 +230,8 @@ function buildSyncPayload(){
     else if(k===TASK_COMPLETIONS_KEY)journal.taskCompletions=v||{};
     else if(k==='zp_ideas')journal.ideas=v;
     else if(k==='zp_library')journal.library=v;
+    else if(k==='zp_agenda_notes')journal.agendaNotes=v;
+    else if(k==='zp_notebook')journal.notebook=v;
     else if(k==='zp_cal_events')journal.calEvents=v;
     else if(k==='zp_day_types')journal.dayTypes=v;
     else if(k.startsWith('zp_habits_'))habits[k.slice(10)]=v;
@@ -277,6 +279,60 @@ function mergeTimestampMap(remoteValue,localValue){
     if(!out[id]||localTime>=remoteTime)out[id]=value;
   });
   return out;
+}
+
+function agendaNoteTime(note){
+  const raw=note&&typeof note==='object'?note.updatedAt:null;
+  if(typeof raw==='number'&&Number.isFinite(raw))return raw;
+  const t=Date.parse(raw||'');
+  return Number.isFinite(t)?t:0;
+}
+function normalizeAgendaNotes(value){
+  const out={};
+  if(!value||typeof value!=='object')return out;
+  Object.entries(value).forEach(([date,note])=>{
+    if(note&&typeof note==='object')out[date]={text:String(note.text||''),updatedAt:note.updatedAt||0,deleted:!!note.deleted};
+    else out[date]={text:String(note||''),updatedAt:0,deleted:!String(note||'').trim()};
+  });
+  return out;
+}
+function mergeAgendaNotes(remoteValue,localValue){
+  const out=normalizeAgendaNotes(remoteValue);
+  const local=normalizeAgendaNotes(localValue);
+  Object.entries(local).forEach(([date,note])=>{
+    const current=out[date];
+    if(!current||agendaNoteTime(note)>=agendaNoteTime(current))out[date]=note;
+  });
+  return out;
+}
+function notebookPageTime(page){
+  const raw=page&&typeof page==='object'?page.updatedAt:null;
+  if(typeof raw==='number'&&Number.isFinite(raw))return raw;
+  const t=Date.parse(raw||'');
+  return Number.isFinite(t)?t:0;
+}
+function normalizeNotebook(value){
+  const pages=Array.isArray(value?.pages)?value.pages:[];
+  const safePages=pages.filter(p=>p&&p.id).map((p,i)=>({
+    id:String(p.id),
+    title:String(p.title||`Página ${i+1}`),
+    html:String(p.html||''),
+    text:String(p.text||''),
+    createdAt:p.createdAt||p.updatedAt||new Date().toISOString(),
+    updatedAt:p.updatedAt||p.createdAt||new Date().toISOString(),
+  }));
+  return{pages:safePages,currentId:value?.currentId||safePages[0]?.id||null};
+}
+function mergeNotebook(remoteValue,localValue){
+  const remote=normalizeNotebook(remoteValue);
+  const local=normalizeNotebook(localValue);
+  const byId=new Map(remote.pages.map(p=>[p.id,p]));
+  local.pages.forEach(page=>{
+    const current=byId.get(page.id);
+    if(!current||notebookPageTime(page)>=notebookPageTime(current))byId.set(page.id,page);
+  });
+  const pages=Array.from(byId.values()).sort((a,b)=>(a.createdAt||'').localeCompare(b.createdAt||''));
+  return{pages,currentId:local.currentId||remote.currentId||pages[0]?.id||null};
 }
 
 function taskTime(item){
@@ -427,6 +483,12 @@ function applySyncRow(row,dirty){
     }else if(k===TASK_DELETES_KEY||k===TASK_COMPLETIONS_KEY){
       const localValue=readSyncLocal(k,{});
       nextValue=mergeTimestampMap(v,localValue);
+    }else if(k==='zp_agenda_notes'){
+      const localValue=readSyncLocal(k,{});
+      nextValue=mergeAgendaNotes(v,localValue);
+    }else if(k==='zp_notebook'){
+      const localValue=readSyncLocal(k,{});
+      nextValue=mergeNotebook(v,localValue);
     }else if(dirty&&dirty.has(k)){
       const localValue=readSyncLocal(k);
       if(k.startsWith('zp_habits_')||k.startsWith('zp_mental_')||k.startsWith('zp_cierre_'))nextValue=mergeArrayById(v,localValue);
@@ -444,6 +506,8 @@ function applySyncRow(row,dirty){
   for(const[d,v]of Object.entries(h))put('zp_habits_'+d,v);
   if(j.ideas!==undefined)put('zp_ideas',j.ideas);
   if(j.library!==undefined)put('zp_library',j.library);
+  if(j.agendaNotes!==undefined)put('zp_agenda_notes',j.agendaNotes);
+  if(j.notebook!==undefined)put('zp_notebook',j.notebook);
   if(j.calEvents!==undefined)put('zp_cal_events',j.calEvents);
   if(j.dayTypes!==undefined)put('zp_day_types',j.dayTypes);
   if(j.taskDeletes!==undefined)put(TASK_DELETES_KEY,j.taskDeletes);
@@ -669,6 +733,8 @@ const DEF_MENTAL=[];
 const DEF_CIERRE=[];
 const DEF_IDEAS=[];
 const DEF_LIBRARY=[];
+const DEF_AGENDA_NOTES={};
+const DEF_NOTEBOOK={pages:[],currentId:null};
 function cleanHabitList(habits,{done=false}={}){
   if(!Array.isArray(habits))return[];
   const seen=new Set();
@@ -996,6 +1062,8 @@ const IIdeas=p=><IB {...p}><path d="M9.2 16.5V18.3c0 .6.5 1.2 1.2 1.2h3.2c.7 0 1
 const IIdeasF=p=><svg width={p?.size||22} height={p?.size||22} viewBox="0 0 24 24" fill="currentColor"><path d="M12 3.5a6 6 0 0 0-3.6 10.8c.5.4.8 1 .8 1.7v.5h5.6v-.5c0-.7.3-1.3.8-1.7A6 6 0 0 0 12 3.5z"/><rect x="9" y="17" width="6" height="2.5" rx="1.2" opacity="0.6"/><rect x="10" y="20" width="4" height="1.6" rx="0.8" opacity="0.4"/></svg>;
 const IContent=p=><IB {...p}><rect x="4" y="5" width="16" height="14" rx="2.8"/><path d="M10 9l5 3-5 3z" fill="currentColor" stroke="none"/><path d="M7 21h10"/></IB>;
 const IContentF=p=><svg width={p?.size||22} height={p?.size||22} viewBox="0 0 24 24" fill="currentColor"><rect x="3.5" y="5" width="17" height="14" rx="3"/><path d="M10 9l5.5 3-5.5 3.1z" fill="#fff" opacity="0.92"/><rect x="7" y="20.2" width="10" height="1.4" rx="0.7" opacity="0.45"/></svg>;
+const INotes=p=><IB {...p}><path d="M6.5 4.5h9.8l2.2 2.2v12.8h-12z"/><path d="M16.2 4.7v2.2h2.1"/><path d="M9 10.5h6M9 14h6M9 17.5h4"/></IB>;
+const INotesF=p=><svg width={p?.size||22} height={p?.size||22} viewBox="0 0 24 24" fill="currentColor"><path d="M6.2 3.8h10.1l2.5 2.5v13.9H6.2z" opacity="0.95"/><path d="M16.2 4.1v2.7h2.7" fill="#fff" opacity="0.42"/><rect x="9" y="10.2" width="6.2" height="1.2" rx="0.6" fill="#fff" opacity="0.72"/><rect x="9" y="13.6" width="6.2" height="1.2" rx="0.6" fill="#fff" opacity="0.72"/><rect x="9" y="17" width="4.2" height="1.2" rx="0.6" fill="#fff" opacity="0.72"/></svg>;
 const IPlus=p=><IB {...p} sw={2}><path d="M12 5v14M5 12h14"/></IB>;
 const IChev=p=><IB {...p}><path d="M9 5l7 7-7 7"/></IB>;
 const ICheck=p=><IB {...p} sw={2.4}><path d="M4.5 12.5l5 5 10-11"/></IB>;
@@ -1159,9 +1227,9 @@ const TABS=[
   {id:'semanal',label:'Semanal',A:ISemF,I:ISem},
   {id:'mensual',label:'Mensual',A:IMenF,I:IMen},
   {id:'calendario',label:'Agenda',A:ICalF,I:ICal},
-  {id:'doce',label:'12 sem',A:IDoceF,I:IDoce},
+  {id:'notas',label:'Bloc',A:INotesF,I:INotes},
   {id:'ideas',label:'Ideas',A:IIdeasF,I:IIdeas},
-  {id:'contenido',label:'Contenido',A:IContentF,I:IContent},
+  {id:'doce',label:'12 sem',A:IDoceF,I:IDoce},
 ];
 
 function userDisplayName(user){
@@ -2672,6 +2740,149 @@ function CalendarioScreen({calEvents,setCalEvents}){
   </div>;
 }
 
+// ── BLOC DE NOTAS ─────────────────────────────────────────────────────────────
+const HIGHLIGHT_COLORS=[
+  {id:'yellow',label:'Amarillo',color:'#FEF08A'},
+  {id:'green',label:'Verde',color:'#BBF7D0'},
+  {id:'blue',label:'Azul',color:'#BFDBFE'},
+  {id:'pink',label:'Rosa',color:'#FBCFE8'},
+  {id:'violet',label:'Violeta',color:'#DDD6FE'},
+];
+function stripHtml(html){
+  if(typeof document==='undefined')return String(html||'').replace(/<[^>]*>/g,' ');
+  const d=document.createElement('div');
+  d.innerHTML=html||'';
+  return d.textContent||'';
+}
+function makeNotebookPage(n){
+  const now=new Date().toISOString();
+  return{id:'p'+Date.now()+Math.floor(Math.random()*1000),title:`Página ${n}`,html:'',text:'',createdAt:now,updatedAt:now};
+}
+function BlocNotasScreen({notebook,setNotebook,agendaNotes}){
+  const isD=useD();
+  const px=isD?52:14;
+  const editorRef=useRef(null);
+  const data=normalizeNotebook(notebook);
+  const pages=data.pages;
+  const current=pages.find(p=>p.id===data.currentId)||pages[0]||null;
+  const currentIndex=Math.max(0,pages.findIndex(p=>p.id===current?.id));
+
+  useEffect(()=>{
+    if(pages.length>0)return;
+    const legacy=Object.entries(agendaNotes||{}).filter(([,n])=>n&&!n.deleted&&String(n.text||'').trim());
+    if(legacy.length){
+      setNotebook({
+        pages:legacy.sort((a,b)=>String(a[0]).localeCompare(String(b[0]))).map(([key,n],i)=>({
+          id:'p'+key.replaceAll('-','')+i,
+          title:`Página ${i+1}`,
+          html:String(n.text||'').split('\n').map(line=>line||'<br>').join('<br>'),
+          text:String(n.text||''),
+          createdAt:n.updatedAt||new Date().toISOString(),
+          updatedAt:n.updatedAt||new Date().toISOString(),
+        })),
+        currentId:null,
+      });
+    }else{
+      const first=makeNotebookPage(1);
+      setNotebook({pages:[first],currentId:first.id});
+    }
+  },[]);
+
+  useEffect(()=>{
+    if(editorRef.current&&current&&editorRef.current.innerHTML!==current.html)editorRef.current.innerHTML=current.html||'';
+  },[current?.id]);
+
+  function patchNotebook(updater){
+    setNotebook(prev=>{
+      const n=normalizeNotebook(prev);
+      const next=typeof updater==='function'?updater(n):updater;
+      return normalizeNotebook(next);
+    });
+  }
+  function selectPage(id){patchNotebook(n=>({...n,currentId:id}));}
+  function addPage(){
+    patchNotebook(n=>{
+      const page=makeNotebookPage((n.pages||[]).length+1);
+      return{pages:[...(n.pages||[]),page],currentId:page.id};
+    });
+  }
+  function renamePage(title){
+    if(!current)return;
+    const clean=title.trim()||`Página ${currentIndex+1}`;
+    patchNotebook(n=>({...n,pages:n.pages.map(p=>p.id===current.id?{...p,title:clean,updatedAt:new Date().toISOString()}:p)}));
+  }
+  function saveEditor(){
+    if(!current||!editorRef.current)return;
+    const html=editorRef.current.innerHTML;
+    const text=stripHtml(html);
+    patchNotebook(n=>({...n,pages:n.pages.map(p=>p.id===current.id?{...p,html,text,updatedAt:new Date().toISOString()}:p)}));
+  }
+  function highlight(color){
+    if(!editorRef.current)return;
+    editorRef.current.focus();
+    try{document.execCommand('styleWithCSS',false,true);document.execCommand('hiliteColor',false,color);}catch{}
+    saveEditor();
+  }
+  function clearHighlight(){
+    if(!editorRef.current)return;
+    editorRef.current.focus();
+    try{document.execCommand('removeFormat',false,null);}catch{}
+    saveEditor();
+  }
+
+  return<div style={{display:'flex',flexDirection:'column',flex:1,minHeight:0,height:'100%'}}>
+    <NavHeader eyebrow="BLOC" title="Bloc de notas" subtitle={`${pages.length} página${pages.length!==1?'s':''}`}/>
+    <div className="scroll zp-page" style={{flex:1,minHeight:0,paddingBottom:14}}>
+      <div style={{padding:`0 ${px}px`,display:'grid',gridTemplateColumns:isD?'260px minmax(0,1fr)':'1fr',gap:isD?16:12,alignItems:'start'}}>
+        <Card radius={22} padding={0}>
+          <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',padding:'14px 16px 10px'}}>
+            <div style={{fontSize:15,fontWeight:700,color:'var(--text-1)',letterSpacing:-0.2}}>Páginas</div>
+            <button onClick={addPage} style={{width:28,height:28,borderRadius:14,background:'var(--accent-soft)',color:'var(--accent)',
+              display:'flex',alignItems:'center',justifyContent:'center'}}><IPlus size={14}/></button>
+          </div>
+          {pages.map((page,i)=>{
+            const active=page.id===current?.id;
+            return<button key={page.id} onClick={()=>selectPage(page.id)}
+              style={{width:'100%',textAlign:'left',padding:'12px 16px',borderTop:i>0?'0.5px solid var(--separator)':'none',
+                background:active?'var(--accent-soft)':'transparent',display:'block'}}>
+              <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',gap:8,marginBottom:4}}>
+                <span style={{fontSize:13,fontWeight:700,color:active?'var(--accent)':'var(--text-1)'}}>{page.title}</span>
+                <span style={{fontSize:11,color:'var(--text-3)'}}>{i+1}</span>
+              </div>
+              <div style={{fontSize:12.5,color:'var(--text-3)',lineHeight:1.35,display:'-webkit-box',
+                WebkitLineClamp:2,WebkitBoxOrient:'vertical',overflow:'hidden'}}>{page.text||'Página en blanco'}</div>
+            </button>;
+          })}
+        </Card>
+
+        <Card radius={22} padding={isD?18:14}>
+          {current&&<>
+            <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',gap:12,marginBottom:12,flexWrap:'wrap'}}>
+              <input value={current.title} onChange={e=>renamePage(e.target.value)}
+                style={{flex:1,minWidth:160,fontSize:isD?20:17,fontWeight:700,color:'var(--text-1)',letterSpacing:-0.3,
+                  background:'transparent',border:'none',outline:'none',fontFamily:'inherit'}}/>
+              <Chip tint="var(--accent)">Página {currentIndex+1}</Chip>
+            </div>
+            <div style={{display:'flex',alignItems:'center',gap:8,flexWrap:'wrap',marginBottom:12}}>
+              <span style={{fontSize:12,color:'var(--text-3)',fontWeight:600}}>Subrayar</span>
+              {HIGHLIGHT_COLORS.map(c=><button key={c.id} title={c.label} onClick={()=>highlight(c.color)}
+                style={{width:28,height:28,borderRadius:14,background:c.color,border:'1px solid rgba(0,0,0,0.08)'}}/>)}
+              <button onClick={clearHighlight} style={{padding:'6px 10px',borderRadius:999,background:'var(--fill-1)',
+                color:'var(--text-2)',fontSize:12,fontWeight:600}}>Quitar</button>
+            </div>
+            <div ref={editorRef} contentEditable suppressContentEditableWarning onInput={saveEditor}
+              data-placeholder="Escribe aquí como en un libro..."
+              style={{width:'100%',minHeight:isD?'calc(100vh - 315px)':390,fontFamily:'ui-rounded,-apple-system,system-ui',
+                fontSize:isD?17:16,lineHeight:1.75,color:'var(--text-1)',background:'repeating-linear-gradient(to bottom,var(--surface-1) 0,var(--surface-1) 31px,var(--separator) 32px)',
+                border:'0.5px solid var(--hairline)',borderRadius:16,padding:'18px 18px',outline:'none',boxSizing:'border-box',
+                whiteSpace:'pre-wrap',overflowWrap:'break-word'}}/>
+          </>}
+        </Card>
+      </div>
+    </div>
+  </div>;
+}
+
 // ── 12 SEMANAS ────────────────────────────────────────────────────────────────
 function DoceScreen(){
   const isD=useD();
@@ -2880,10 +3091,11 @@ const STATUSES=[
 ];
 const PRIO_COLOR={urgente:'var(--sys-red)',alta:'var(--sys-orange)',media:'var(--accent)',baja:'var(--text-3)'};
 
-function IdeasScreen({ideas,setIdeas}){
+function IdeasScreen({ideas,setIdeas,library,setLibrary}){
   const isD=useD();
   const[newTitle,setNewTitle]=useState('');
   const[adding,setAdding]=useState(false);
+  const[section,setSection]=useState('ideas');
   function addIdea(){if(!newTitle.trim())return;
     setIdeas(prev=>[{id:'i'+Date.now(),title:newTitle.trim(),desc:'',status:'inbox',
       prio:'media',createdAt:Date.now()},...prev]);setNewTitle('');setAdding(false);}
@@ -2891,6 +3103,23 @@ function IdeasScreen({ideas,setIdeas}){
     if(d===0)return'hoy';if(d===1)return'ayer';return`hace ${d} días`;}
   function moveStatus(id,status){setIdeas(prev=>prev.map(i=>i.id===id?{...i,status}:i));}
   const px=isD?52:14;
+  const Segment=<div style={{display:'flex',alignItems:'center',gap:4,padding:3,borderRadius:999,background:'var(--fill-1)'}}>
+    {[
+      {id:'ideas',label:'Ideas'},
+      {id:'contenido',label:'Contenido'},
+    ].map(s=><button key={s.id} onClick={()=>setSection(s.id)}
+      style={{padding:isD?'7px 12px':'6px 10px',borderRadius:999,background:section===s.id?'var(--accent)':'transparent',
+        color:section===s.id?'#fff':'var(--text-2)',fontSize:isD?13:12,fontWeight:700}}>
+      {s.label}
+    </button>)}
+  </div>;
+
+  if(section==='contenido'){
+    return<div style={{display:'flex',flexDirection:'column',flex:1,minHeight:0,height:'100%'}}>
+      <NavHeader eyebrow="IDEAS" title="Ideas y contenido" subtitle="Biblioteca de enlaces, videos y temas" right={Segment}/>
+      <ContentScreen library={library} setLibrary={setLibrary} embedded/>
+    </div>;
+  }
 
   const AddCard=adding?<Card radius={16} padding={14}>
     <input value={newTitle} onChange={e=>setNewTitle(e.target.value)}
@@ -2913,7 +3142,7 @@ function IdeasScreen({ideas,setIdeas}){
 
   if(isD){
     return<div style={{display:'flex',flexDirection:'column',flex:1,minHeight:0,height:'100%'}}>
-      <NavHeader eyebrow="IDEAS" title="Capturar" right={<GlassPillBtn icon={<ISearch size={16}/>}/>}/>
+      <NavHeader eyebrow="IDEAS" title="Ideas y contenido" right={<div style={{display:'flex',alignItems:'center',gap:8}}>{Segment}<GlassPillBtn icon={<ISearch size={16}/>}/></div>}/>
       <div className="scroll zp-page" style={{flex:1,minHeight:0,paddingBottom:14}}>
         <div style={{padding:`0 ${px}px`,display:'flex',flexDirection:'column',gap:16}}>
           {AddCard}
@@ -2957,7 +3186,7 @@ function IdeasScreen({ideas,setIdeas}){
   }
 
   return<div style={{display:'flex',flexDirection:'column',flex:1,minHeight:0,height:'100%'}}>
-    <NavHeader eyebrow="IDEAS" title="Capturar" right={<GlassPillBtn icon={<ISearch size={16}/>}/>}/>
+    <NavHeader eyebrow="IDEAS" title="Ideas" right={Segment}/>
     <div className="scroll zp-page" style={{flex:1,minHeight:0,paddingBottom:14}}>
       <div style={{padding:'0 14px',display:'flex',flexDirection:'column',gap:10}}>
         {AddCard}
@@ -3026,7 +3255,7 @@ function normalizeUrl(url){
   if(/^https?:\/\//i.test(v))return v;
   return`https://${v}`;
 }
-function ContentScreen({library,setLibrary}){
+function ContentScreen({library,setLibrary,embedded=false}){
   const isD=useD();
   const[adding,setAdding]=useState(false);
   const[filter,setFilter]=useState('todos');
@@ -3166,9 +3395,7 @@ function ContentScreen({library,setLibrary}){
     })}
   </Card>;
 
-  return<div style={{display:'flex',flexDirection:'column',flex:1,minHeight:0,height:'100%'}}>
-    <NavHeader eyebrow="CONTENIDO" title="Biblioteca" subtitle={`${items.length} guardados`}/>
-    <div className="scroll zp-page" style={{flex:1,minHeight:0,paddingBottom:14}}>
+  const Body=<div className="scroll zp-page" style={{flex:1,minHeight:0,paddingBottom:14}}>
       <div style={{padding:`0 ${px}px`,display:'flex',flexDirection:'column',gap:isD?14:10}}>
         <div style={{display:isD?'grid':'flex',gridTemplateColumns:isD?'1fr 240px':undefined,flexDirection:'column',gap:isD?14:10}}>
           <div style={{display:'flex',flexDirection:'column',gap:isD?14:10}}>
@@ -3183,7 +3410,11 @@ function ContentScreen({library,setLibrary}){
           </div>}
         </div>
       </div>
-    </div>
+    </div>;
+  if(embedded)return Body;
+  return<div style={{display:'flex',flexDirection:'column',flex:1,minHeight:0,height:'100%'}}>
+    <NavHeader eyebrow="CONTENIDO" title="Biblioteca" subtitle={`${items.length} guardados`}/>
+    {Body}
   </div>;
 }
 
@@ -3799,13 +4030,15 @@ function AppContent({user,isDesktop,dark,theme,setTheme,accent,setAccent,onSignO
   const[cierre,setCierre]=useLS('zp_cierre_'+TODAY_KEY,DEF_CIERRE);
   const[ideas,setIdeas]=useLS('zp_ideas',DEF_IDEAS);
   const[library,setLibrary]=useLS('zp_library',DEF_LIBRARY);
+  const[agendaNotes,setAgendaNotes]=useLS('zp_agenda_notes',DEF_AGENDA_NOTES);
+  const[notebook,setNotebook]=useLS('zp_notebook',DEF_NOTEBOOK);
   const[streak]=useLS('zp_streak',0);
   const[calEvents,setCalEvents]=useLS('zp_cal_events',DEF_CAL_EVENTS);
   const[dayTypes,setDayTypes]=useLS('zp_day_types',{});
   const[showSettings,setShowSettings]=useState(false);
 
   const screenProps={habits,setHabits,setHabitTemplate,tasks,setTasks,mental,setMental,cierre,setCierre,streak,ideas,setIdeas,library,setLibrary,
-    theme,setTheme,accent,setAccent};
+    agendaNotes,setAgendaNotes,notebook,setNotebook,theme,setTheme,accent,setAccent};
 
   useEffect(()=>{
     const todayKey='zp_habits_'+TODAY_KEY;
@@ -3833,24 +4066,25 @@ function AppContent({user,isDesktop,dark,theme,setTheme,accent,setAccent,onSignO
     };
   },[calEvents]);
 
+  const currentTab=TABS.some(t=>t.id===tab)?tab:'ideas';
   const Screen=showSettings
     ?<AjustesScreen theme={theme} setTheme={setTheme} accent={accent} setAccent={setAccent}
         user={user} onSignOut={onSignOut} signingOut={signingOut}
         onBack={isDesktop?undefined:()=>setShowSettings(false)}/>
-    :tab==='hoy'?<HoyScreen {...screenProps} onSettings={()=>setShowSettings(true)}/>
-    :tab==='semanal'?<SemanalScreen/>
-    :tab==='mensual'?<MensualScreen dayTypes={dayTypes} setDayTypes={setDayTypes}/>
-    :tab==='calendario'?<CalendarioScreen calEvents={calEvents} setCalEvents={setCalEvents}/>
-    :tab==='doce'?<DoceScreen/>
-    :tab==='ideas'?<IdeasScreen ideas={ideas} setIdeas={setIdeas}/>
-    :tab==='contenido'?<ContentScreen library={library} setLibrary={setLibrary}/>
+    :currentTab==='hoy'?<HoyScreen {...screenProps} onSettings={()=>setShowSettings(true)}/>
+    :currentTab==='semanal'?<SemanalScreen/>
+    :currentTab==='mensual'?<MensualScreen dayTypes={dayTypes} setDayTypes={setDayTypes}/>
+    :currentTab==='calendario'?<CalendarioScreen calEvents={calEvents} setCalEvents={setCalEvents}/>
+    :currentTab==='notas'?<BlocNotasScreen notebook={notebook} setNotebook={setNotebook} agendaNotes={agendaNotes}/>
+    :currentTab==='ideas'?<IdeasScreen ideas={ideas} setIdeas={setIdeas} library={library} setLibrary={setLibrary}/>
+    :currentTab==='doce'?<DoceScreen/>
     :null;
 
   return(
     <DCtx.Provider value={isDesktop}>
       <div style={{height:'100%',width:'100%',display:'flex',flexDirection:'row',background:'var(--app-bg)',
         paddingTop:'env(safe-area-inset-top,0px)',overflow:'hidden'}}>
-        {isDesktop&&<Sidebar current={showSettings?'__settings':tab} onChange={t=>{setTab(t);setShowSettings(false);}}
+        {isDesktop&&<Sidebar current={showSettings?'__settings':currentTab} onChange={t=>{setTab(t);setShowSettings(false);}}
           streak={streak} onSettings={()=>setShowSettings(!showSettings)} dark={dark} user={user}/>}
         <div className="zp-main" style={{flex:1,display:'flex',flexDirection:'column',overflow:'hidden',minWidth:0}}>
           {isDesktop
@@ -3858,7 +4092,7 @@ function AppContent({user,isDesktop,dark,theme,setTheme,accent,setAccent,onSignO
                <div className="zp-screen-wrap" style={{width:'100%',maxWidth:'var(--content-max)',margin:'0 auto',flex:'1 1 auto',minWidth:0}}>{Screen}</div>
              </div>
             :Screen}
-          {!isDesktop&&!showSettings&&<TabBar current={tab} onChange={setTab} dark={dark}/>}
+          {!isDesktop&&!showSettings&&<TabBar current={currentTab} onChange={setTab} dark={dark}/>}
         </div>
       </div>
     </DCtx.Provider>
