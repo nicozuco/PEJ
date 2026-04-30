@@ -282,7 +282,31 @@ function isTaskDeleted(item){
 function taskLaneRank(lane){
   return lane==='top3'?3:lane==='parking'?2:lane==='enfoque'?1:0;
 }
-function mergeTaskBuckets(remoteValue,localValue){
+function maxIso(...values){
+  let best='';
+  let bestTime=0;
+  values.forEach(v=>{
+    const t=Date.parse(v||'');
+    if(Number.isFinite(t)&&t>bestTime){bestTime=t;best=v;}
+  });
+  return best;
+}
+function mergeTaskItem(remoteItem,localItem,lane){
+  if(!remoteItem)return localItem?{...localItem,lane}:null;
+  if(!localItem)return{...remoteItem,lane};
+  const remoteTime=taskTime(remoteItem);
+  const localTime=taskTime(localItem);
+  const base=localTime>=remoteTime?localItem:remoteItem;
+  const other=base===localItem?remoteItem:localItem;
+  const done=!!remoteItem.done||!!localItem.done;
+  const merged={...other,...base,lane,done};
+  const updatedAt=maxIso(remoteItem.updatedAt,localItem.updatedAt);
+  const completedAt=maxIso(remoteItem.completedAt,localItem.completedAt);
+  if(updatedAt)merged.updatedAt=updatedAt;
+  if(done)merged.completedAt=completedAt||updatedAt||new Date().toISOString();
+  return merged;
+}
+function mergeTaskBuckets(remoteValue,localValue,opts={}){
   const lanes=['top3','enfoque','parking'];
   const empty={top3:[],enfoque:[],parking:[]};
   const remote=normalizeTaskBuckets(remoteValue||empty).tasks;
@@ -294,24 +318,21 @@ function mergeTaskBuckets(remoteValue,localValue){
     if(!item||isTaskDeleted(item))return;
     if(!item.id){loose.push({item,lane});return;}
     const id=String(item.id);
-    const prev=byId.get(id);
-    const incomingTime=taskTime(item);
-    const prevTime=prev?taskTime(prev.item):0;
-    const localLaneBeatsRemoteLane=source==='local'&&prev?.source==='remote'&&lane!==prev.lane;
-    const localLaneConflict=source==='local'&&prev?.source==='local'&&lane!==prev.lane;
-    const localLaneWins=localLaneConflict&&(
-      taskLaneRank(lane)>taskLaneRank(prev.lane)||
-      (taskLaneRank(lane)===taskLaneRank(prev.lane)&&incomingTime>prevTime)
-    );
-    const canUseTime=!localLaneConflict;
-    if(!prev||localLaneBeatsRemoteLane||localLaneWins||(canUseTime&&incomingTime>prevTime)||(source==='local'&&incomingTime===prevTime&&lane===prev.lane)){
-      byId.set(id,{item,lane,source});
-    }
+    const rec=byId.get(id)||{};
+    if(source==='local')byId.set(id,{...rec,local:item,localLane:lane});
+    else byId.set(id,{...rec,remote:item,remoteLane:lane});
   };
   lanes.forEach(lane=>(remote[lane]||[]).forEach(item=>take(item,lane,'remote')));
   lanes.forEach(lane=>(local[lane]||[]).forEach(item=>take(item,lane,'local')));
   loose.forEach(({item,lane})=>merged[lane].push(item));
-  byId.forEach(({item,lane})=>merged[lane].push(item));
+  byId.forEach(rec=>{
+    const lane=rec.localLane||rec.remoteLane||'enfoque';
+    let item=mergeTaskItem(rec.remote,rec.local,lane);
+    if(opts.completeRemoteMissingFromLocal&&rec.remote&&!rec.local&&!rec.remote.done){
+      item=touchTask({...rec.remote,done:true},rec.remoteLane||lane);
+    }
+    if(item)merged[lane].push(item);
+  });
   return normalizeTaskBuckets(merged).tasks;
 }
 
@@ -337,7 +358,7 @@ function preserveLocalTasksAfterPull(remoteTasks){
   dates.forEach(d=>{
     const key='zp_tasks_'+d;
     const localValue=readSyncLocal(key,null);
-    if(!tasksHaveAny(localValue))return;
+    if(localValue===null)return;
     const remoteValue=(remoteTasks||{})[d]||{top3:[],enfoque:[],parking:[]};
     if(!taskBucketsEqual(localValue,remoteValue)){__dirtyKeys.add(key);needsPush=true;}
   });
@@ -354,7 +375,7 @@ function applySyncRow(row,dirty){
     let nextValue=v;
     if(k.startsWith('zp_tasks_')){
       const localValue=readSyncLocal(k,null);
-      if(localValue)nextValue=mergeTaskBuckets(v,localValue);
+      if(localValue)nextValue=mergeTaskBuckets(v,localValue,{completeRemoteMissingFromLocal:k===`zp_tasks_${TODAY_KEY}`});
     }else if(dirty&&dirty.has(k)){
       const localValue=readSyncLocal(k);
       if(k.startsWith('zp_habits_')||k.startsWith('zp_mental_')||k.startsWith('zp_cierre_'))nextValue=mergeArrayById(v,localValue);
@@ -448,13 +469,13 @@ async function pullAllRemote(userId){
       else{__lastRemoteUpdatedAt=seeded&&seeded.updated_at;console.log('[zp sync seed] created row for new user');}
       return{ok:true,changed:false};
     }
+    preserveLocalTasksAfterPull(data.journal?.tasks||{});
     // Skip if we already have this exact remote version (cheap dedupe).
     if(__lastRemoteUpdatedAt&&data.updated_at===__lastRemoteUpdatedAt&&__dirtyKeys.size===0){
       if(window.__zpDebug)console.log('[zp sync pull] up-to-date, skip');
       return{ok:true,changed:false};
     }
     const changed=applySyncRow(data,__dirtyKeys);
-    preserveLocalTasksAfterPull(data.journal?.tasks||{});
     __lastRemoteUpdatedAt=data.updated_at||__lastRemoteUpdatedAt;
     try{if(data.updated_at)localStorage.setItem('zp_last_sync',data.updated_at);}catch{}
     console.log('[zp sync pull] hydrated, updated_at=',data.updated_at,'changed=',changed);
@@ -561,8 +582,17 @@ function useLS(key,def){
       if(!e||!e.detail||e.detail.key!==key)return;
       try{const s=localStorage.getItem(key);setVal(s?JSON.parse(s):def);}catch{}
     };
+    const storageFn=e=>{
+      if(!e||e.key!==key)return;
+      try{setVal(e.newValue&&e.newValue!=='undefined'?JSON.parse(e.newValue):def);}catch{}
+      if(shouldSync(key))pushRemote(key);
+    };
     window.addEventListener('zp-ls',fn);
-    return()=>window.removeEventListener('zp-ls',fn);
+    window.addEventListener('storage',storageFn);
+    return()=>{
+      window.removeEventListener('zp-ls',fn);
+      window.removeEventListener('storage',storageFn);
+    };
   },[key]);
   return[val,set];
 }
@@ -740,7 +770,8 @@ function fireCalendarReminders(calEvents){
 }
 function normalizeTaskBuckets(tasks){
   const lanes=['top3','enfoque','parking'];
-  const safe={top3:[],enfoque:[],parking:[]};
+  const byId=new Map();
+  const loose=[];
   let changed=false;
   lanes.forEach(lane=>{
     const items=Array.isArray(tasks?.[lane])?tasks[lane]:[];
@@ -749,9 +780,21 @@ function normalizeTaskBuckets(tasks){
       const target=lane==='enfoque'&&explicitLane&&explicitLane!=='enfoque'?explicitLane:lane;
       const nextItem=item&&item.lane===target?item:{...item,lane:target};
       if(target!==lane||nextItem!==item)changed=true;
-      safe[target].push(nextItem);
+      if(!nextItem?.id){loose.push({item:nextItem,lane:target});return;}
+      const id=String(nextItem.id);
+      const prev=byId.get(id);
+      const nextTime=taskTime(nextItem);
+      const prevTime=prev?taskTime(prev.item):0;
+      const wins=!prev||
+        taskLaneRank(target)>taskLaneRank(prev.lane)||
+        (taskLaneRank(target)===taskLaneRank(prev.lane)&&nextTime>=prevTime);
+      if(wins)byId.set(id,{item:nextItem,lane:target});
+      if(prev)changed=true;
     });
   });
+  const safe={top3:[],enfoque:[],parking:[]};
+  loose.forEach(({item,lane})=>safe[lane].push(item));
+  byId.forEach(({item,lane})=>safe[lane].push(item));
   if(safe.top3.length<=3)return{tasks:safe,changed};
   const keep=safe.top3.slice(0,3);
   const overflow=safe.top3.slice(3);
@@ -777,7 +820,10 @@ function readTasksForDate(dateKeyValue){
 }
 function taskNow(){return new Date().toISOString();}
 function touchTask(task,lane){
-  return{...task,...(lane?{lane}:{}),updatedAt:taskNow()};
+  const now=taskNow();
+  const next={...task,...(lane?{lane}:{}),updatedAt:now};
+  if(next.done)next.completedAt=next.completedAt||now;
+  return next;
 }
 function makeTask(id,text,createdDate,lane){
   return{id,text,done:false,subtasks:[],createdDate,...(lane?{lane}:{}),updatedAt:taskNow()};
