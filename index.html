@@ -227,6 +227,7 @@ function buildSyncPayload(){
     else if(k==='zp_habit_template')settings.habitTemplate=v;
     else if(k==='zp_twelve')twelve=v||{};
     else if(k===TASK_DELETES_KEY)journal.taskDeletes=v||{};
+    else if(k===TASK_COMPLETIONS_KEY)journal.taskCompletions=v||{};
     else if(k==='zp_ideas')journal.ideas=v;
     else if(k==='zp_library')journal.library=v;
     else if(k==='zp_cal_events')journal.calEvents=v;
@@ -267,6 +268,17 @@ function mergeArrayById(remoteValue,localValue){
   return out;
 }
 
+function mergeTimestampMap(remoteValue,localValue){
+  const out={...(remoteValue&&typeof remoteValue==='object'?remoteValue:{})};
+  if(!localValue||typeof localValue!=='object')return out;
+  Object.entries(localValue).forEach(([id,value])=>{
+    const remoteTime=Date.parse(out[id]||'')||0;
+    const localTime=Date.parse(value||'')||0;
+    if(!out[id]||localTime>=remoteTime)out[id]=value;
+  });
+  return out;
+}
+
 function taskTime(item){
   const t=Date.parse(item?.updatedAt||item?.createdAt||'');
   return Number.isFinite(t)?t:0;
@@ -274,10 +286,37 @@ function taskTime(item){
 function taskDeleteMap(){
   return readSyncLocal(TASK_DELETES_KEY,{})||{};
 }
+function taskCompletionMap(){
+  return readSyncLocal(TASK_COMPLETIONS_KEY,{})||{};
+}
 function isTaskDeleted(item){
   if(!item||!item.id)return false;
   const deletedAt=Date.parse(taskDeleteMap()[item.id]||'');
   return Number.isFinite(deletedAt)&&deletedAt>0&&deletedAt>=taskTime(item);
+}
+function hasTaskCompletionMark(item){
+  if(!item||!item.id)return false;
+  const completedAt=Date.parse(taskCompletionMap()[item.id]||'');
+  return Number.isFinite(completedAt)&&completedAt>0&&completedAt>=taskTime(item);
+}
+function lastSyncTime(value){
+  const t=Date.parse(value||'');
+  return Number.isFinite(t)?t:0;
+}
+function shouldCompleteMissingRemoteTask(item,opts={}){
+  if(!item||item.done)return false;
+  if(hasTaskCompletionMark(item))return true;
+  const remoteTime=taskTime(item);
+  const syncedAt=lastSyncTime(opts.localLastSyncAt);
+  return remoteTime>0&&syncedAt>0&&remoteTime<=syncedAt;
+}
+function shouldCompleteMissingLocalTask(item,opts={}){
+  if(!item||item.done)return false;
+  if(hasTaskCompletionMark(item))return true;
+  const localTime=taskTime(item);
+  const syncedAt=lastSyncTime(opts.localLastSyncAt);
+  const remoteUpdatedAt=lastSyncTime(opts.remoteUpdatedAt);
+  return localTime>0&&syncedAt>0&&localTime<=syncedAt&&(!remoteUpdatedAt||remoteUpdatedAt>=syncedAt);
 }
 function taskLaneRank(lane){
   return lane==='top3'?3:lane==='parking'?2:lane==='enfoque'?1:0;
@@ -328,8 +367,10 @@ function mergeTaskBuckets(remoteValue,localValue,opts={}){
   byId.forEach(rec=>{
     const lane=rec.localLane||rec.remoteLane||'enfoque';
     let item=mergeTaskItem(rec.remote,rec.local,lane);
-    if(opts.completeRemoteMissingFromLocal&&rec.remote&&!rec.local&&!rec.remote.done){
+    if(opts.completeRemoteMissingFromLocal&&rec.remote&&!rec.local&&shouldCompleteMissingRemoteTask(rec.remote,opts)){
       item=touchTask({...rec.remote,done:true},rec.remoteLane||lane);
+    }else if(opts.completeLocalMissingFromRemote&&rec.local&&!rec.remote&&shouldCompleteMissingLocalTask(rec.local,opts)){
+      item=touchTask({...rec.local,done:true},rec.localLane||lane);
     }
     if(item)merged[lane].push(item);
   });
@@ -370,12 +411,22 @@ function preserveLocalTasksAfterPull(remoteTasks){
 function applySyncRow(row,dirty){
   if(!row)return false;
   const s=row.settings||{},h=row.habits||{},j=row.journal||{},tw=row.twelve;
+  const localLastSyncAt=localStorage.getItem('zp_last_sync')||'';
+  const remoteUpdatedAt=row.updated_at||'';
   let changed=false;
   const put=(k,v)=>{
     let nextValue=v;
     if(k.startsWith('zp_tasks_')){
       const localValue=readSyncLocal(k,null);
-      if(localValue)nextValue=mergeTaskBuckets(v,localValue,{completeRemoteMissingFromLocal:k===`zp_tasks_${TODAY_KEY}`});
+      if(localValue)nextValue=mergeTaskBuckets(v,localValue,{
+        completeRemoteMissingFromLocal:k===`zp_tasks_${TODAY_KEY}`,
+        completeLocalMissingFromRemote:true,
+        localLastSyncAt,
+        remoteUpdatedAt,
+      });
+    }else if(k===TASK_DELETES_KEY||k===TASK_COMPLETIONS_KEY){
+      const localValue=readSyncLocal(k,{});
+      nextValue=mergeTimestampMap(v,localValue);
     }else if(dirty&&dirty.has(k)){
       const localValue=readSyncLocal(k);
       if(k.startsWith('zp_habits_')||k.startsWith('zp_mental_')||k.startsWith('zp_cierre_'))nextValue=mergeArrayById(v,localValue);
@@ -396,6 +447,7 @@ function applySyncRow(row,dirty){
   if(j.calEvents!==undefined)put('zp_cal_events',j.calEvents);
   if(j.dayTypes!==undefined)put('zp_day_types',j.dayTypes);
   if(j.taskDeletes!==undefined)put(TASK_DELETES_KEY,j.taskDeletes);
+  if(j.taskCompletions!==undefined)put(TASK_COMPLETIONS_KEY,j.taskCompletions);
   if(j.tasks)for(const[d,v]of Object.entries(j.tasks))put('zp_tasks_'+d,v);
   if(j.mental)for(const[d,v]of Object.entries(j.mental))put('zp_mental_'+d,v);
   if(j.cierre)for(const[d,v]of Object.entries(j.cierre))put('zp_cierre_'+d,v);
@@ -584,6 +636,7 @@ function useLS(key,def){
     };
     const storageFn=e=>{
       if(!e||e.key!==key)return;
+      if(key===`zp_tasks_${TODAY_KEY}`)recordCompletionsFromTaskDiff(e.oldValue,e.newValue);
       try{setVal(e.newValue&&e.newValue!=='undefined'?JSON.parse(e.newValue):def);}catch{}
       if(shouldSync(key))pushRemote(key);
     };
@@ -610,6 +663,7 @@ function scoreHueSoft(s){if(s==null)return'transparent';if(s>=8)return'var(--sys
 const DEF_HABITS=[];
 const HABIT_TEMPLATE_KEY='zp_habit_template';
 const TASK_DELETES_KEY='zp_task_deletes';
+const TASK_COMPLETIONS_KEY='zp_task_completions';
 const DEF_TASKS={top3:[],enfoque:[],parking:[]};
 const DEF_MENTAL=[];
 const DEF_CIERRE=[];
@@ -835,6 +889,27 @@ function recordTaskDelete(id){
   try{localStorage.setItem(TASK_DELETES_KEY,JSON.stringify(deletes));}catch{}
   pushRemote(TASK_DELETES_KEY);
 }
+function recordTaskCompletion(id,at=taskNow()){
+  if(!id)return;
+  const completions=readLSJSON(TASK_COMPLETIONS_KEY,{})||{};
+  completions[id]=at;
+  try{localStorage.setItem(TASK_COMPLETIONS_KEY,JSON.stringify(completions));}catch{}
+  pushRemote(TASK_COMPLETIONS_KEY);
+}
+function taskIdsFromBuckets(tasks){
+  const out=new Set();
+  const normalized=normalizeTaskBuckets(tasks||DEF_TASKS).tasks;
+  ['top3','enfoque','parking'].forEach(l=>(normalized[l]||[]).forEach(t=>{if(t&&t.id)out.add(String(t.id));}));
+  return out;
+}
+function recordCompletionsFromTaskDiff(oldRaw,newRaw){
+  if(!oldRaw||oldRaw==='undefined')return;
+  let oldValue,newValue;
+  try{oldValue=JSON.parse(oldRaw);newValue=newRaw&&newRaw!=='undefined'?JSON.parse(newRaw):DEF_TASKS;}catch{return;}
+  const oldIds=taskIdsFromBuckets(oldValue);
+  const newIds=taskIdsFromBuckets(newValue);
+  oldIds.forEach(id=>{if(!newIds.has(id))recordTaskCompletion(id);});
+}
 function writeTasksForDate(dateKeyValue,updater){
   const key=taskStorageKey(dateKeyValue);
   const current=readTasksForDate(dateKeyValue);
@@ -862,13 +937,17 @@ function ensureRollover(){
     }
     if(!past)return;
     const pastIds=new Set(lanes.flatMap(l=>(past[l]||[]).map(t=>t.id)));
-    const existing=rls('zp_tasks_'+TODAY_KEY)||{top3:[],enfoque:[],parking:[]};
+    const todayKey='zp_tasks_'+TODAY_KEY;
+    const todayRaw=localStorage.getItem(todayKey);
+    const todayAlreadyExists=!!(todayRaw&&todayRaw!=='undefined');
+    const existing=rls(todayKey)||{top3:[],enfoque:[],parking:[]};
     const existingIds=new Set(lanes.flatMap(l=>(existing[l]||[]).map(t=>t.id)));
     const updated={top3:[...(existing.top3||[])],enfoque:[...(existing.enfoque||[])],parking:[...(existing.parking||[])]};
     let chg=false;
     for(const l of lanes){
-      // Add new undone past tasks not yet in today
-      const od=(past[l]||[]).filter(t=>!t.done&&!existingIds.has(t.id))
+      // Add unfinished past tasks only before today's task bucket exists.
+      // Once today exists, a missing id means the user/widget already dealt with it.
+      const od=(past[l]||[]).filter(t=>!todayAlreadyExists&&!t.done&&!existingIds.has(t.id)&&!isTaskDeleted(t)&&!hasTaskCompletionMark(t))
         .map(t=>t.createdDate?t:{...t,createdDate:pastKey});
       if(od.length){updated[l]=[...od,...updated[l]];chg=true;}
       // Backfill createdDate on existing today's tasks that came from a past day
@@ -888,9 +967,8 @@ function ensureRollover(){
     const normalized=normalizeTaskBuckets(updated);
     if(normalized.changed){chg=true;}
     if(chg){
-      const k='zp_tasks_'+TODAY_KEY;
-      localStorage.setItem(k,JSON.stringify(normalized.tasks));
-      pushRemote(k);
+      localStorage.setItem(todayKey,JSON.stringify(normalized.tasks));
+      pushRemote(todayKey);
       window.dispatchEvent(new CustomEvent('zp-resync'));
     }
   }catch(e){console.error('[zp rollover]',e);}
@@ -1281,7 +1359,12 @@ function HoyDashboard({score,habits,setHabits,tasks,setTasks,mental,streak}){
         const subsDone=subs.filter(s=>s.done).length;
         return<div key={t.id}
           style={{padding:isD?'13px 0':'8px 0',borderTop:i>0?'0.5px solid var(--separator)':'none'}}>
-          <div onClick={()=>setTasks(prev=>({...prev,top3:prev.top3.map(x=>x.id===t.id?touchTask({...x,done:!x.done},'top3'):x)}))}
+          <div onClick={()=>setTasks(prev=>({...prev,top3:prev.top3.map(x=>{
+              if(x.id!==t.id)return x;
+              const next=touchTask({...x,done:!x.done},'top3');
+              if(next.done)recordTaskCompletion(x.id,next.completedAt||next.updatedAt);
+              return next;
+            })}))}
             style={{display:'flex',alignItems:'center',gap:12,cursor:'pointer'}}>
             <div style={{width:isD?24:22,height:isD?24:22,borderRadius:12,flexShrink:0,
               border:t.done?'none':'1.5px solid var(--separator-strong)',
@@ -1407,7 +1490,12 @@ function HoyTareas({tasks,setTasks}){
   const completedTasks=React.useMemo(()=>LANES.flatMap(l=>(tasks[l.id]||[])
     .filter(t=>t.done)
     .map(t=>({...t,__lane:l.id,__laneLabel:l.label,__laneColor:l.color}))),[tasks]);
-  function toggleTask(lane,id){setTasks(prev=>({...prev,[lane]:(prev[lane]||[]).map(t=>t.id===id?touchTask({...t,done:!t.done},lane):t)}));}
+  function toggleTask(lane,id){setTasks(prev=>({...prev,[lane]:(prev[lane]||[]).map(t=>{
+    if(t.id!==id)return t;
+    const next=touchTask({...t,done:!t.done},lane);
+    if(next.done)recordTaskCompletion(id,next.completedAt||next.updatedAt);
+    return next;
+  })}));}
   function chooseNewLane(lane){newLaneRef.current=lane;setNewLane(lane);}
   function addTask(){if(!newTask.trim())return;
     const lane=newLaneRef.current||newLane||'enfoque';
@@ -2228,7 +2316,12 @@ function CalendarioScreen({calEvents,setCalEvents}){
   function toggleAgendaTask(lane,id){
     writeTasksForDate(selKey,prev=>({
       ...prev,
-      [lane]:(prev[lane]||[]).map(t=>t.id===id?touchTask({...t,done:!t.done},lane):t),
+      [lane]:(prev[lane]||[]).map(t=>{
+        if(t.id!==id)return t;
+        const next=touchTask({...t,done:!t.done},lane);
+        if(next.done)recordTaskCompletion(id,next.completedAt||next.updatedAt);
+        return next;
+      }),
     }));
     setTaskVersion(v=>v+1);
   }
