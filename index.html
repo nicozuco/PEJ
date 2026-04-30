@@ -729,7 +729,14 @@ const HABIT_TEMPLATE_KEY='zp_habit_template';
 const TASK_DELETES_KEY='zp_task_deletes';
 const TASK_COMPLETIONS_KEY='zp_task_completions';
 const DEF_TASKS={top3:[],enfoque:[],parking:[]};
-const DEF_MENTAL=[];
+const DEF_MENTAL=[
+  {id:'miedo',label:'Miedo',desc:'¿Actuaste con miedo o con claridad?',state:null},
+  {id:'codicia',label:'Codicia',desc:'¿Tomaste más riesgo del planificado?',state:null},
+  {id:'sesgoVenganza',label:'Sesgo de venganza',desc:'¿Operaste para recuperar pérdidas?',state:null},
+  {id:'paciencia',label:'Paciencia',desc:'¿Esperaste el setup correcto?',state:null},
+  {id:'seguirPlan',label:'Seguir el plan',desc:'¿Seguiste tu sistema sin improvisar?',state:null},
+  {id:'gestionRiesgo',label:'Gestión de riesgo',desc:'¿Respetaste tu sizing y stops?',state:null},
+];
 const DEF_CIERRE=[];
 const DEF_IDEAS=[];
 const DEF_LIBRARY=[];
@@ -752,6 +759,51 @@ function habitTemplateFromDay(habits){
 }
 function habitsFromTemplate(template){
   return cleanHabitList(template,{done:false});
+}
+function latestHabitTemplate(){
+  const found=[];
+  try{
+    for(let i=0;i<localStorage.length;i++){
+      const k=localStorage.key(i);
+      if(!k||!k.startsWith('zp_habits_')||k===`zp_habits_${TODAY_KEY}`)continue;
+      const v=readSyncLocal(k,[]);
+      const list=habitTemplateFromDay(v);
+      if(list.length)found.push({key:k,list});
+    }
+  }catch{}
+  found.sort((a,b)=>b.key.localeCompare(a.key));
+  return found[0]?.list||[];
+}
+function cleanMentalList(items,{keepState=false}={}){
+  if(!Array.isArray(items))return[];
+  const seen=new Set();
+  return items
+    .filter(m=>m&&m.id&&String(m.label||'').trim())
+    .map(m=>({
+      id:String(m.id),
+      label:String(m.label).trim(),
+      desc:String(m.desc||''),
+      state:keepState&&(m.state==='bien'||m.state==='mal')?m.state:null,
+    }))
+    .filter(m=>{
+      if(seen.has(m.id))return false;
+      seen.add(m.id);
+      return true;
+    });
+}
+function latestMentalTemplate(){
+  const found=[];
+  try{
+    for(let i=0;i<localStorage.length;i++){
+      const k=localStorage.key(i);
+      if(!k||!k.startsWith('zp_mental_')||k===`zp_mental_${TODAY_KEY}`)continue;
+      const v=readSyncLocal(k,[]);
+      const list=cleanMentalList(v);
+      if(list.length)found.push({key:k,list});
+    }
+  }catch{}
+  found.sort((a,b)=>b.key.localeCompare(a.key));
+  return found[0]?.list||cleanMentalList(DEF_MENTAL);
 }
 const REPEAT_UNITS=[
   {id:'none',label:'No repetir'},
@@ -4023,10 +4075,19 @@ function AppContent({user,isDesktop,dark,theme,setTheme,accent,setAccent,onSignO
   const[tab,setTab]=useLS('zp_tab','hoy');
   const initialHabitTemplate=readSyncLocal(HABIT_TEMPLATE_KEY,DEF_HABITS);
   const initialTodayHabits=readSyncLocal('zp_habits_'+TODAY_KEY,null);
-  const[habitTemplate,setHabitTemplate]=useLS(HABIT_TEMPLATE_KEY,habitTemplateFromDay(initialHabitTemplate));
-  const[habits,setHabits]=useLS('zp_habits_'+TODAY_KEY,initialTodayHabits||habitsFromTemplate(initialHabitTemplate));
+  const initialHabitTemplateExists=localStorage.getItem(HABIT_TEMPLATE_KEY)!==null;
+  const initialHabitFallback=cleanHabitList(initialHabitTemplate).length?habitTemplateFromDay(initialHabitTemplate):(!initialHabitTemplateExists?latestHabitTemplate():[]);
+  const initialTodayMental=readSyncLocal('zp_mental_'+TODAY_KEY,null);
+  const initialMentalTemplate=latestMentalTemplate();
+  const[habitTemplate,setHabitTemplate]=useLS(HABIT_TEMPLATE_KEY,initialHabitFallback);
+  const[habits,setHabits]=useLS('zp_habits_'+TODAY_KEY,
+    Array.isArray(initialTodayHabits)&&initialTodayHabits.length?cleanHabitList(initialTodayHabits,{done:false}).map(h=>{
+      const original=initialTodayHabits.find(x=>x&&String(x.id)===h.id);
+      return{...h,done:!!original?.done};
+    }):habitsFromTemplate(initialHabitFallback));
   const[tasks,setTasks]=useLS('zp_tasks_'+TODAY_KEY,DEF_TASKS);
-  const[mental,setMental]=useLS('zp_mental_'+TODAY_KEY,DEF_MENTAL);
+  const[mental,setMental]=useLS('zp_mental_'+TODAY_KEY,
+    Array.isArray(initialTodayMental)&&initialTodayMental.length?cleanMentalList(initialTodayMental,{keepState:true}):initialMentalTemplate);
   const[cierre,setCierre]=useLS('zp_cierre_'+TODAY_KEY,DEF_CIERRE);
   const[ideas,setIdeas]=useLS('zp_ideas',DEF_IDEAS);
   const[library,setLibrary]=useLS('zp_library',DEF_LIBRARY);
@@ -4044,9 +4105,18 @@ function AppContent({user,isDesktop,dark,theme,setTheme,accent,setAccent,onSignO
     const todayKey='zp_habits_'+TODAY_KEY;
     const hasToday=localStorage.getItem(todayKey)!==null;
     const hasTemplate=localStorage.getItem(HABIT_TEMPLATE_KEY)!==null;
-    if(!hasTemplate&&hasToday)setHabitTemplate(habitTemplateFromDay(habits));
-    if(!hasToday&&Array.isArray(habitTemplate)&&habitTemplate.length>0)setHabits(habitsFromTemplate(habitTemplate));
+    const template=cleanHabitList(habitTemplate).length?habitTemplateFromDay(habitTemplate):(!hasTemplate?latestHabitTemplate():[]);
+    if(!hasTemplate&&Array.isArray(habits)&&habits.length>0)setHabitTemplate(habitTemplateFromDay(habits));
+    if((!hasToday||!Array.isArray(habits)||habits.length===0)&&template.length){
+      setHabitTemplate(template);
+      setHabits(habitsFromTemplate(template));
+    }
   },[habitTemplate]);
+  useEffect(()=>{
+    if(Array.isArray(mental)&&mental.length>0)return;
+    const template=latestMentalTemplate();
+    if(template.length)setMental(template);
+  },[mental,setMental]);
 
   useEffect(()=>{
     const normalized=normalizeTaskBuckets(tasks);
