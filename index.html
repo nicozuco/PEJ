@@ -592,12 +592,7 @@ function applySyncRow(row,dirty){
     let nextValue=v;
     if(k.startsWith('zp_tasks_')){
       const localValue=readSyncLocal(k,null);
-      if(localValue&&dirty&&dirty.has(k))nextValue=mergeTaskBuckets(v,localValue,{
-        completeRemoteMissingFromLocal:k===`zp_tasks_${TODAY_KEY}`,
-        completeLocalMissingFromRemote:true,
-        localLastSyncAt,
-        remoteUpdatedAt,
-      });
+      if(localValue&&dirty&&dirty.has(k))nextValue=mergeTaskBuckets(v,localValue);
       else nextValue=normalizeTaskBuckets(v||DEF_TASKS).tasks;
     }else if(k===HABIT_DELETES_KEY||k===TASK_DELETES_KEY||k===TASK_COMPLETIONS_KEY){
       const localValue=readSyncLocal(k,{});
