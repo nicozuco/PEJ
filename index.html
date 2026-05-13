@@ -186,6 +186,14 @@ async function unregisterPushSubscription(){
   }
   return{subscribed:false,permission:typeof Notification!=='undefined'?Notification.permission:'unsupported'};
 }
+async function syncExistingPushSubscription(){
+  if(!pushSupported()||Notification.permission!=='granted')return false;
+  const reg=await navigator.serviceWorker.getRegistration();
+  const sub=reg?await reg.pushManager.getSubscription():null;
+  if(!sub)return false;
+  await registerPushSubscription();
+  return true;
+}
 
 function translateAuthError(e){
   const m=(e?.message||'').toLowerCase();
@@ -278,6 +286,17 @@ function buildSyncPayload(){
     else if(k.startsWith('zp_exp_')&&k!=='zp_exp_cats'&&k!=='zp_exp_recurring')journal.expenses[k.slice(7)]=v;
   }
   return{habits,journal,settings,twelve};
+}
+
+function preserveServerManagedSettings(localSettings,remoteSettings){
+  const next={...(localSettings||{})};
+  if(remoteSettings&&typeof remoteSettings==='object'){
+    if(Array.isArray(remoteSettings.pushSubscriptions))next.pushSubscriptions=remoteSettings.pushSubscriptions;
+    if(remoteSettings.pushDeliveryHistory&&typeof remoteSettings.pushDeliveryHistory==='object'){
+      next.pushDeliveryHistory=remoteSettings.pushDeliveryHistory;
+    }
+  }
+  return next;
 }
 
 function readSyncLocal(key,def=null){
@@ -667,6 +686,7 @@ async function flushPush(){
     // Clear dirty up-front; if push fails we'll restore them.
     dirtySnapshot.forEach(k=>__dirtyKeys.delete(k));
     const payload={user_id:session.user.id,...buildSyncPayload(),updated_at:new Date().toISOString()};
+    payload.settings=preserveServerManagedSettings(payload.settings,remote?.settings);
     const{data:upserted,error}=await sb.from('user_data').upsert(payload,{onConflict:'user_id'}).select().maybeSingle();
     if(error){
       console.error('[zp sync push]',error.message,error);
@@ -1079,7 +1099,7 @@ function reminderOccurrenceKey(baseKey,ev,occAt){
 }
 function isDueReminder(now,occAt){
   const diff=now.getTime()-occAt.getTime();
-  return diff>=0&&diff<90000;
+  return diff>=-15000&&diff<75000;
 }
 function dueReminderOccurrences(calEvents,now=new Date()){
   const due=[];
@@ -5296,6 +5316,20 @@ function AppContent({user,isDesktop,dark,theme,setTheme,accent,setAccent,onSignO
     showCompletedTasks:(settings||{}).showCompleted!==false};
 
   useEffect(()=>{
+    const syncPush=()=>syncExistingPushSubscription().catch(err=>{
+      if(window.__zpDebug)console.warn('[zp push sync]',err);
+    });
+    syncPush();
+    const onVisible=()=>{if(document.visibilityState==='visible')syncPush();};
+    window.addEventListener('focus',syncPush);
+    document.addEventListener('visibilitychange',onVisible);
+    return()=>{
+      window.removeEventListener('focus',syncPush);
+      document.removeEventListener('visibilitychange',onVisible);
+    };
+  },[user.id]);
+
+  useEffect(()=>{
     const todayKey='zp_habits_'+TODAY_KEY;
     const hasToday=localStorage.getItem(todayKey)!==null;
     const hasTemplate=localStorage.getItem(HABIT_TEMPLATE_KEY)!==null;
@@ -5335,7 +5369,7 @@ function AppContent({user,isDesktop,dark,theme,setTheme,accent,setAccent,onSignO
   },[tasks,setTasks]);
   useEffect(()=>{
     fireCalendarReminders(calEvents);
-    const tick=setInterval(()=>fireCalendarReminders(calEvents),30000);
+    const tick=setInterval(()=>fireCalendarReminders(calEvents),10000);
     const onFocus=()=>fireCalendarReminders(calEvents);
     const onVisible=()=>{if(document.visibilityState==='visible')fireCalendarReminders(calEvents);};
     window.addEventListener('focus',onFocus);
