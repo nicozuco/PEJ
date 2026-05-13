@@ -217,15 +217,34 @@ const useD = () => useContext(DCtx);
 const DAYS_ES=['domingo','lunes','martes','miércoles','jueves','viernes','sábado'];
 const MONTHS_ES=['enero','febrero','marzo','abril','mayo','junio','julio','agosto','septiembre','octubre','noviembre','diciembre'];
 const TODAY=new Date();
-const TODAY_KEY=TODAY.toISOString().split('T')[0];
 function fmtToday(d=TODAY){return`${DAYS_ES[d.getDay()]}, ${d.getDate()} ${MONTHS_ES[d.getMonth()]}`;}
 function fmtMonth(d=TODAY){return`${MONTHS_ES[d.getMonth()]} ${d.getFullYear()}`;}
 function getWeekNum(d=TODAY){const j=new Date(d.getFullYear(),0,1);return Math.ceil(((d-j)/86400000+j.getDay()+1)/7);}
 function dateKey(y,m,d){return`${y}-${String(m+1).padStart(2,'0')}-${String(d).padStart(2,'0')}`;}
+const TODAY_KEY=dateKey(TODAY.getFullYear(),TODAY.getMonth(),TODAY.getDate());
 const EVENT_COLORS=[
   {id:'blue',hex:'#3B82F6'},{id:'purple',hex:'#AF52DE'},
   {id:'green',hex:'#34C759'},{id:'amber',hex:'#FF9F0A'},{id:'red',hex:'#FF3B30'},
 ];
+const EVENT_TYPES=[
+  {id:'recordatorio',label:'Recordatorio'},
+  {id:'cumpleanos',label:'Cumpleaños'},
+  {id:'cita',label:'Cita'},
+  {id:'tarea',label:'Tarea'},
+  {id:'evento',label:'Evento'},
+];
+function eventTypeLabel(ev){
+  return (EVENT_TYPES.find(t=>t.id===(ev?.type||ev?.eventType))||EVENT_TYPES[0]).label;
+}
+function notificationTitle(ev){
+  return eventTypeLabel(ev).toUpperCase();
+}
+function notificationBody(ev,occAt){
+  const time=occAt.toLocaleTimeString('es-ES',{hour:'2-digit',minute:'2-digit'});
+  const title=(ev?.title||'').trim();
+  const repeat=eventRepeatUnit(ev)==='none'?'':repeatSummary(ev);
+  return [time,title,repeat].filter(Boolean).join(' · ');
+}
 const DAY_TYPE_CFG={
   festivo:{label:'Festivo',color:'#FF2D55',soft:'rgba(255,45,85,0.12)',Icon:p=><ISparkleStar {...p}/>},
   vacaciones:{label:'Vacaciones',color:'#AF52DE',soft:'rgba(175,82,222,0.12)',Icon:p=><IUmbrella {...p}/>},
@@ -446,25 +465,6 @@ function hasTaskCompletionMark(item){
   const completedAt=Date.parse((mark&&typeof mark==='object'?mark.at:mark)||'');
   return Number.isFinite(completedAt)&&completedAt>0;
 }
-function lastSyncTime(value){
-  const t=Date.parse(value||'');
-  return Number.isFinite(t)?t:0;
-}
-function shouldCompleteMissingRemoteTask(item,opts={}){
-  if(!item||item.done)return false;
-  if(hasTaskCompletionMark(item))return true;
-  const remoteTime=taskTime(item);
-  const syncedAt=lastSyncTime(opts.localLastSyncAt);
-  return remoteTime>0&&syncedAt>0&&remoteTime<=syncedAt;
-}
-function shouldCompleteMissingLocalTask(item,opts={}){
-  if(!item||item.done)return false;
-  if(hasTaskCompletionMark(item))return true;
-  const localTime=taskTime(item);
-  const syncedAt=lastSyncTime(opts.localLastSyncAt);
-  const remoteUpdatedAt=lastSyncTime(opts.remoteUpdatedAt);
-  return localTime>0&&syncedAt>0&&localTime<=syncedAt&&(!remoteUpdatedAt||remoteUpdatedAt>=syncedAt);
-}
 function taskLaneRank(lane){
   return lane==='top3'?3:lane==='parking'?2:lane==='enfoque'?1:0;
 }
@@ -502,7 +502,7 @@ function mergeTaskItem(remoteItem,localItem,lane){
   }
   return merged;
 }
-function mergeTaskBuckets(remoteValue,localValue,opts={}){
+function mergeTaskBuckets(remoteValue,localValue){
   const lanes=['top3','enfoque','parking'];
   const empty={top3:[],enfoque:[],parking:[]};
   const remote=normalizeTaskBuckets(remoteValue||empty).tasks;
@@ -523,12 +523,7 @@ function mergeTaskBuckets(remoteValue,localValue,opts={}){
   loose.forEach(({item,lane})=>merged[lane].push(item));
   byId.forEach(rec=>{
     const lane=rec.localLane||rec.remoteLane||'enfoque';
-    let item=mergeTaskItem(rec.remote,rec.local,lane);
-    if(opts.completeRemoteMissingFromLocal&&rec.remote&&!rec.local&&shouldCompleteMissingRemoteTask(rec.remote,opts)){
-      item=touchTask({...rec.remote,done:true},rec.remoteLane||lane);
-    }else if(opts.completeLocalMissingFromRemote&&rec.local&&!rec.remote&&shouldCompleteMissingLocalTask(rec.local,opts)){
-      item=touchTask({...rec.local,done:true},rec.localLane||lane);
-    }
+    const item=mergeTaskItem(rec.remote,rec.local,lane);
     if(item)merged[lane].push(item);
   });
   return normalizeTaskBuckets(merged).tasks;
@@ -836,7 +831,6 @@ function useLS(key,def){
     };
     const storageFn=e=>{
       if(!e||e.key!==key)return;
-      if(key===`zp_tasks_${TODAY_KEY}`)recordCompletionsFromTaskDiff(e.oldValue,e.newValue);
       try{setVal(e.newValue&&e.newValue!=='undefined'?JSON.parse(e.newValue):def);}catch{}
     };
     window.addEventListener('zp-ls',fn);
@@ -1133,8 +1127,8 @@ function fireCalendarReminders(calEvents){
     history[key]=Date.now();
     changed=true;
     try{
-      new Notification(ev.title||'Recordatorio', {
-        body:`${occAt.toLocaleTimeString('es-ES',{hour:'2-digit',minute:'2-digit'})} · ${repeatSummary(ev)}`,
+      new Notification(notificationTitle(ev), {
+        body:notificationBody(ev,occAt),
         tag:key,
       });
     }catch{}
@@ -1345,14 +1339,6 @@ function restoreArchivedTasksForDate(dateKeyValue,tasks){
   });
   return changed?normalizeTaskBuckets(next).tasks:null;
 }
-function recordCompletionsFromTaskDiff(oldRaw,newRaw){
-  if(!oldRaw||oldRaw==='undefined')return;
-  let oldValue,newValue;
-  try{oldValue=JSON.parse(oldRaw);newValue=newRaw&&newRaw!=='undefined'?JSON.parse(newRaw):DEF_TASKS;}catch{return;}
-  const oldIds=taskIdsFromBuckets(oldValue);
-  const newIds=taskIdsFromBuckets(newValue);
-  oldIds.forEach(id=>{if(!newIds.has(id))recordTaskCompletion(id);});
-}
 function writeTasksForDate(dateKeyValue,updater){
   const key=taskStorageKey(dateKeyValue);
   const current=readTasksForDate(dateKeyValue);
@@ -1375,7 +1361,7 @@ function ensureRollover(){
     let past=null,pastKey=null;
     for(let i=1;i<=30;i++){
       const d=new Date(TODAY);d.setDate(d.getDate()-i);
-      const dk=d.toISOString().split('T')[0];
+      const dk=dateKey(d.getFullYear(),d.getMonth(),d.getDate());
       const t=rls('zp_tasks_'+dk);
       if(t&&lanes.some(l=>Array.isArray(t[l])&&t[l].length>0)){past=t;pastKey=dk;break;}
     }
@@ -3001,6 +2987,7 @@ function AgendaScreen({dayTypes,setDayTypes,calEvents,setCalEvents}){
   const[newTime,setNewTime]=useState('');
   const[newTitle,setNewTitle]=useState('');
   const[newColor,setNewColor]=useState('#3B82F6');
+  const[newType,setNewType]=useState('recordatorio');
   const[newRemind,setNewRemind]=useState(false);
   const[newRepeatUnit,setNewRepeatUnit]=useState('none');
   const[newRepeatEvery,setNewRepeatEvery]=useState(1);
@@ -3009,6 +2996,7 @@ function AgendaScreen({dayTypes,setDayTypes,calEvents,setCalEvents}){
   const[editTime,setEditTime]=useState('');
   const[editTitle,setEditTitle]=useState('');
   const[editColor,setEditColor]=useState('#3B82F6');
+  const[editType,setEditType]=useState('recordatorio');
   const[editRemind,setEditRemind]=useState(false);
   const[editRepeatUnit,setEditRepeatUnit]=useState('none');
   const[editRepeatEvery,setEditRepeatEvery]=useState(1);
@@ -3063,10 +3051,11 @@ function AgendaScreen({dayTypes,setDayTypes,calEvents,setCalEvents}){
   const selType=dayTypes[selKey]||null;
   const dayEvs=getEventsForDate(calEvents,selKey);
   const dayTasks=React.useMemo(()=>readTasksForDate(selKey),[selKey,taskVersion]);
+  const scheduledForSelectedDay=task=>!task?.createdDate||task.createdDate===selKey;
   const allDayTasks=[
-    ...(dayTasks.top3||[]).map(t=>({...t,__lane:'top3'})),
-    ...(dayTasks.enfoque||[]).map(t=>({...t,__lane:'enfoque'})),
-    ...(dayTasks.parking||[]).map(t=>({...t,__lane:'parking'})),
+    ...(dayTasks.top3||[]).filter(scheduledForSelectedDay).map(t=>({...t,__lane:'top3'})),
+    ...(dayTasks.enfoque||[]).filter(scheduledForSelectedDay).map(t=>({...t,__lane:'enfoque'})),
+    ...(dayTasks.parking||[]).filter(scheduledForSelectedDay).map(t=>({...t,__lane:'parking'})),
   ];
   const selLabel=`${DAYS_ES[new Date(y,m,selDay).getDay()].charAt(0).toUpperCase()+
     DAYS_ES[new Date(y,m,selDay).getDay()].slice(1)} ${selDay} ${MONTHS_ES[m]}`;
@@ -3085,18 +3074,18 @@ function AgendaScreen({dayTypes,setDayTypes,calEvents,setCalEvents}){
   },[selKey]);
 
   function resetAddForm(){
-    setNewTitle('');setNewTime('');setNewColor('#3B82F6');setNewRemind(false);setNewRepeatUnit('none');setNewRepeatEvery(1);
+    setNewTitle('');setNewTime('');setNewColor('#3B82F6');setNewType('recordatorio');setNewRemind(false);setNewRepeatUnit('none');setNewRepeatEvery(1);
   }
   function resetTaskForm(){
     setNewTaskText('');setNewTaskLane('enfoque');
   }
   function closeEditor(){
     setEditingId('');setEditingBaseKey('');
-    setEditTitle('');setEditTime('');setEditColor('#3B82F6');setEditRemind(false);setEditRepeatUnit('none');setEditRepeatEvery(1);
+    setEditTitle('');setEditTime('');setEditColor('#3B82F6');setEditType('recordatorio');setEditRemind(false);setEditRepeatUnit('none');setEditRepeatEvery(1);
   }
   function addEvent(){
     if(!newTitle.trim())return;
-    const ev={id:'ev'+Date.now(),time:newTime||'00:00',title:newTitle.trim(),color:newColor,
+    const ev={id:'ev'+Date.now(),time:newTime||'00:00',title:newTitle.trim(),color:newColor,type:newType,
       remind:newRemind,repeatUnit:newRepeatUnit,repeatEvery:newRepeatUnit==='none'?1:Math.max(1,parseInt(newRepeatEvery,10)||1)};
     setCalEvents(p=>({...p,[selKey]:[...(p[selKey]||[]),ev]}));
     resetAddForm();setAdding(false);
@@ -3107,7 +3096,7 @@ function AgendaScreen({dayTypes,setDayTypes,calEvents,setCalEvents}){
   }
   function addAgendaTask(){
     if(!newTaskText.trim())return;
-    if(newTaskLane==='top3'&&(dayTasks.top3||[]).length>=3){alert('Top 3 solo admite 3 tareas.');return;}
+    if(newTaskLane==='top3'&&(dayTasks.top3||[]).filter(scheduledForSelectedDay).length>=3){alert('Top 3 solo admite 3 tareas.');return;}
     const id='t'+Date.now();
     writeTasksForDate(selKey,prev=>({
       ...prev,
@@ -3128,7 +3117,7 @@ function AgendaScreen({dayTypes,setDayTypes,calEvents,setCalEvents}){
   }
   function moveAgendaTask(fromLane,toLane,id){
     if(fromLane===toLane)return;
-    if(toLane==='top3'&&(dayTasks.top3||[]).length>=3){alert('Top 3 solo admite 3 tareas.');return;}
+    if(toLane==='top3'&&(dayTasks.top3||[]).filter(t=>scheduledForSelectedDay(t)&&t.id!==id).length>=3){alert('Top 3 solo admite 3 tareas.');return;}
     writeTasksForDate(selKey,prev=>{
       const task=(prev[fromLane]||[]).find(t=>t.id===id);
       if(!task)return prev;
@@ -3156,6 +3145,7 @@ function AgendaScreen({dayTypes,setDayTypes,calEvents,setCalEvents}){
     setEditTime(ev.time||'00:00');
     setEditTitle(ev.title||'');
     setEditColor(ev.color||'#3B82F6');
+    setEditType(ev.type||ev.eventType||'recordatorio');
     setEditRemind(!!ev.remind);
     setEditRepeatUnit(ev.repeatUnit||'none');
     setEditRepeatEvery(Math.max(1,parseInt(ev.repeatEvery,10)||1));
@@ -3166,7 +3156,7 @@ function AgendaScreen({dayTypes,setDayTypes,calEvents,setCalEvents}){
     setCalEvents(p=>({
       ...p,
       [editingBaseKey]:(p[editingBaseKey]||[]).map(ev=>ev.id===editingId
-        ?{...ev,time:editTime||'00:00',title:editTitle.trim(),color:editColor,remind:editRemind,repeatUnit:editRepeatUnit,repeatEvery:nextEvery}
+        ?{...ev,time:editTime||'00:00',title:editTitle.trim(),color:editColor,type:editType,remind:editRemind,repeatUnit:editRepeatUnit,repeatEvery:nextEvery}
         :ev)
     }));
     closeEditor();
@@ -3301,6 +3291,12 @@ function AgendaScreen({dayTypes,setDayTypes,calEvents,setCalEvents}){
           {newColor===ec.hex&&<ICheck size={13} style={{color:'#fff'}}/>}
         </button>)}
       </div>
+      <select value={newType} onChange={e=>setNewType(e.target.value)}
+        style={{width:'100%',fontSize:14,color:'var(--text-1)',background:'var(--fill-1)',
+          border:'0.5px solid var(--hairline)',borderRadius:8,padding:'8px 10px',
+          fontFamily:'inherit',marginBottom:12}}>
+        {EVENT_TYPES.map(opt=><option key={opt.id} value={opt.id}>{opt.label}</option>)}
+      </select>
       <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',gap:10,marginBottom:10}}>
         <div>
           <div style={{fontSize:13,fontWeight:600,color:'var(--text-1)'}}>Recordatorio</div>
@@ -3322,7 +3318,7 @@ function AgendaScreen({dayTypes,setDayTypes,calEvents,setCalEvents}){
         </select>
       </div>
       <div style={{fontSize:11,color:'var(--text-3)',marginBottom:12}}>
-        {newRepeatUnit==='none'?'Evento único':repeatSummary({repeatUnit:newRepeatUnit,repeatEvery:newRepeatEvery})}
+        {newRepeatUnit==='none'?'':repeatSummary({repeatUnit:newRepeatUnit,repeatEvery:newRepeatEvery})}
       </div>
       <div style={{display:'flex',gap:8,justifyContent:'flex-end'}}>
         <button onClick={()=>{resetAddForm();setAdding(false);}} style={{padding:'7px 14px',borderRadius:10,
@@ -3396,6 +3392,12 @@ function AgendaScreen({dayTypes,setDayTypes,calEvents,setCalEvents}){
           {editColor===ec.hex&&<ICheck size={13} style={{color:'#fff'}}/>}
         </button>)}
       </div>
+      <select value={editType} onChange={e=>setEditType(e.target.value)}
+        style={{width:'100%',fontSize:14,color:'var(--text-1)',background:'var(--fill-1)',
+          border:'0.5px solid var(--hairline)',borderRadius:8,padding:'8px 10px',
+          fontFamily:'inherit',marginBottom:12}}>
+        {EVENT_TYPES.map(opt=><option key={`edit-type-${opt.id}`} value={opt.id}>{opt.label}</option>)}
+      </select>
       <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',gap:10,marginBottom:10}}>
         <div>
           <div style={{fontSize:13,fontWeight:600,color:'var(--text-1)'}}>Recordatorio</div>
@@ -3417,7 +3419,7 @@ function AgendaScreen({dayTypes,setDayTypes,calEvents,setCalEvents}){
         </select>
       </div>
       <div style={{fontSize:11,color:'var(--text-3)',marginBottom:12}}>
-        {editRepeatUnit==='none'?'Evento único':repeatSummary({repeatUnit:editRepeatUnit,repeatEvery:editRepeatEvery})}
+        {editRepeatUnit==='none'?'':repeatSummary({repeatUnit:editRepeatUnit,repeatEvery:editRepeatEvery})}
       </div>
       <div style={{display:'flex',gap:8,justifyContent:'flex-end'}}>
         <button onClick={closeEditor} style={{padding:'7px 14px',borderRadius:10,
@@ -3436,7 +3438,8 @@ function AgendaScreen({dayTypes,setDayTypes,calEvents,setCalEvents}){
         <div style={{flex:1,minWidth:0}}>
           <div style={{display:'flex',alignItems:'center',gap:6,flexWrap:'wrap',marginBottom:2}}>
             <div style={{fontSize:12,color:e.color,fontWeight:600}}>{e.time}</div>
-            <Chip tint="var(--accent)" style={{fontSize:10,padding:'2px 7px'}}>{repeatSummary(e)}</Chip>
+            <Chip tint={e.color} style={{fontSize:10,padding:'2px 7px'}}>{eventTypeLabel(e)}</Chip>
+            {eventRepeatUnit(e)!=='none'&&<Chip tint="var(--accent)" style={{fontSize:10,padding:'2px 7px'}}>{repeatSummary(e)}</Chip>}
             {e.remind&&<Chip tint="var(--sys-green)" style={{fontSize:10,padding:'2px 7px'}}>Aviso</Chip>}
           </div>
           <div style={{fontSize:15,fontWeight:500,color:'var(--text-1)',letterSpacing:-0.2}}>{e.title}</div>
