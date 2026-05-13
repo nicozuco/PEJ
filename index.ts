@@ -6,6 +6,8 @@ type CalendarEvent = {
   title?: string
   time?: string
   color?: string
+  type?: string
+  eventType?: string
   remind?: boolean
   repeatUnit?: 'none' | 'hour' | 'day' | 'week' | 'month' | 'year'
   repeatEvery?: number
@@ -24,6 +26,8 @@ type PushDevice = {
   endpoint: string
   subscription: Record<string, unknown>
   user_agent?: string | null
+  time_zone?: string | null
+  app_version?: string | null
   active?: boolean
   last_error?: string | null
   updated_at?: string
@@ -33,6 +37,9 @@ const CRON_SECRET = Deno.env.get('PUSH_CRON_SECRET') ?? Deno.env.get('CRON_SECRE
 const VAPID_PUBLIC = Deno.env.get('PUSH_VAPID_PUBLIC_KEY') ?? ''
 const VAPID_PRIVATE = Deno.env.get('PUSH_VAPID_PRIVATE_KEY') ?? ''
 const VAPID_SUBJECT = Deno.env.get('PUSH_VAPID_SUBJECT') ?? 'mailto:notifications@example.com'
+const DEFAULT_TIME_ZONE = Deno.env.get('PUSH_DEFAULT_TIME_ZONE') ?? 'Europe/Madrid'
+const REMINDER_EARLY_MS = 15000
+const REMINDER_LATE_MS = 75000
 
 webpush.setVapidDetails(VAPID_SUBJECT, VAPID_PUBLIC, VAPID_PRIVATE)
 
@@ -43,9 +50,19 @@ function json(data: unknown, status = 200) {
   })
 }
 
-function parseDateKeyLocal(key: string) {
+function parseDateKeyParts(key: string) {
   const [y, m, d] = key.split('-').map(Number)
-  return new Date(y, (m || 1) - 1, d || 1, 0, 0, 0, 0)
+  return { y, m: m || 1, d: d || 1 }
+}
+
+function safeTimeZone(timeZone?: string | null) {
+  const candidate = timeZone || DEFAULT_TIME_ZONE
+  try {
+    new Intl.DateTimeFormat('en-US', { timeZone: candidate }).format(new Date())
+    return candidate
+  } catch {
+    return DEFAULT_TIME_ZONE
+  }
 }
 
 function timeToParts(time = '00:00') {
@@ -53,11 +70,53 @@ function timeToParts(time = '00:00') {
   return { hh, mm }
 }
 
-function combineDateKeyAndTime(key: string, time = '00:00') {
-  const dt = parseDateKeyLocal(key)
+function dateKeyFromParts(parts: { y: number; m: number; d: number }) {
+  return `${parts.y}-${String(parts.m).padStart(2, '0')}-${String(parts.d).padStart(2, '0')}`
+}
+
+function partsInTimeZone(date: Date, timeZone: string) {
+  const values: Record<string, number> = {}
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hourCycle: 'h23',
+  }).formatToParts(date)
+  for (const part of parts) {
+    if (part.type !== 'literal') values[part.type] = Number(part.value)
+  }
+  return {
+    y: values.year,
+    m: values.month,
+    d: values.day,
+    hh: values.hour,
+    mm: values.minute,
+    ss: values.second,
+  }
+}
+
+function dateKeyInTimeZone(date: Date, timeZone: string) {
+  return dateKeyFromParts(partsInTimeZone(date, timeZone))
+}
+
+function timeZoneOffsetMs(date: Date, timeZone: string) {
+  const parts = partsInTimeZone(date, timeZone)
+  const localAsUtc = Date.UTC(parts.y, parts.m - 1, parts.d, parts.hh, parts.mm, parts.ss || 0)
+  return localAsUtc - date.getTime()
+}
+
+function combineDateKeyAndTime(key: string, time = '00:00', timeZone = DEFAULT_TIME_ZONE) {
+  const { y, m, d } = parseDateKeyParts(key)
   const { hh, mm } = timeToParts(time)
-  dt.setHours(hh, mm, 0, 0)
-  return dt
+  let utc = new Date(Date.UTC(y, m - 1, d, hh, mm, 0, 0))
+  for (let i = 0; i < 3; i += 1) {
+    utc = new Date(Date.UTC(y, m - 1, d, hh, mm, 0, 0) - timeZoneOffsetMs(utc, timeZone))
+  }
+  return utc
 }
 
 function monthDiff(from: Date, to: Date) {
@@ -75,8 +134,10 @@ function repeatEvery(ev: CalendarEvent) {
 function eventOccursOnDate(baseKey: string, ev: CalendarEvent, targetKey: string) {
   const unit = repeatUnit(ev)
   const every = repeatEvery(ev)
-  const base = parseDateKeyLocal(baseKey)
-  const target = parseDateKeyLocal(targetKey)
+  const baseParts = parseDateKeyParts(baseKey)
+  const targetParts = parseDateKeyParts(targetKey)
+  const base = new Date(Date.UTC(baseParts.y, baseParts.m - 1, baseParts.d, 0, 0, 0, 0))
+  const target = new Date(Date.UTC(targetParts.y, targetParts.m - 1, targetParts.d, 0, 0, 0, 0))
   const diffDays = Math.floor((target.getTime() - base.getTime()) / 86400000)
   if (unit === 'none') return baseKey === targetKey
   if (diffDays < 0) return false
@@ -101,7 +162,7 @@ function reminderOccurrenceKey(baseKey: string, ev: CalendarEvent, occAt: Date) 
 
 function isDueReminder(now: Date, occAt: Date) {
   const diff = now.getTime() - occAt.getTime()
-  return diff >= 0 && diff < 90000
+  return diff >= -REMINDER_EARLY_MS && diff < REMINDER_LATE_MS
 }
 
 function repeatSummary(ev: CalendarEvent) {
@@ -116,16 +177,39 @@ function repeatSummary(ev: CalendarEvent) {
   return 'Una vez'
 }
 
-function dueReminderOccurrences(calEvents: Record<string, CalendarEvent[]>, now = new Date()) {
+const EVENT_TYPE_LABELS: Record<string, string> = {
+  recordatorio: 'Recordatorio',
+  cumpleanos: 'Cumpleaños',
+  cita: 'Cita',
+  tarea: 'Tarea',
+  evento: 'Evento',
+}
+
+function eventTypeLabel(ev: CalendarEvent) {
+  return EVENT_TYPE_LABELS[ev.type || ev.eventType || 'recordatorio'] || EVENT_TYPE_LABELS.recordatorio
+}
+
+function notificationTitle(ev: CalendarEvent) {
+  return eventTypeLabel(ev).toUpperCase()
+}
+
+function notificationBody(ev: CalendarEvent, occAt: Date, timeZone: string) {
+  const time = occAt.toLocaleTimeString('es-ES', { timeZone, hour: '2-digit', minute: '2-digit' })
+  const title = (ev.title || '').trim()
+  const repeat = repeatUnit(ev) === 'none' ? '' : repeatSummary(ev)
+  return [time, title, repeat].filter(Boolean).join(' · ')
+}
+
+function dueReminderOccurrences(calEvents: Record<string, CalendarEvent[]>, now = new Date(), timeZone = DEFAULT_TIME_ZONE) {
   const due: { ev: CalendarEvent; baseKey: string; occAt: Date }[] = []
-  const todayKey = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`
+  const todayKey = dateKeyInTimeZone(now, timeZone)
 
   for (const [baseKey, items] of Object.entries(calEvents || {})) {
     for (const ev of items || []) {
       if (!ev?.remind) continue
       const unit = repeatUnit(ev)
       const every = repeatEvery(ev)
-      const baseAt = combineDateKeyAndTime(baseKey, ev.time || '00:00')
+      const baseAt = combineDateKeyAndTime(baseKey, ev.time || '00:00', timeZone)
       if (now < baseAt) continue
 
       if (unit === 'hour') {
@@ -138,7 +222,7 @@ function dueReminderOccurrences(calEvents: Record<string, CalendarEvent[]>, now 
       }
 
       if (!eventOccursOnDate(baseKey, ev, todayKey)) continue
-      const occAt = combineDateKeyAndTime(todayKey, ev.time || '00:00')
+      const occAt = combineDateKeyAndTime(todayKey, ev.time || '00:00', timeZone)
       if (isDueReminder(now, occAt)) due.push({ ev, baseKey, occAt })
     }
   }
@@ -167,9 +251,6 @@ Deno.serve(async (req) => {
 
   for (const userRow of (users || []) as UserRow[]) {
     const calEvents = userRow.journal?.calEvents || {}
-    const due = dueReminderOccurrences(calEvents, now)
-    if (!due.length) continue
-
     const settings = userRow.settings ?? {}
     const subscriptions = (Array.isArray(settings.pushSubscriptions) ? settings.pushSubscriptions : [])
       .filter((sub) => sub?.endpoint && sub?.subscription && sub.active !== false)
@@ -180,6 +261,10 @@ Deno.serve(async (req) => {
     const nextSubscriptions = subscriptions.map((sub) => ({ ...sub }))
 
     for (const sub of nextSubscriptions) {
+      const timeZone = safeTimeZone(sub.time_zone)
+      const due = dueReminderOccurrences(calEvents, now, timeZone)
+      if (!due.length) continue
+
       for (const item of due) {
         const occurrenceKey = reminderOccurrenceKey(item.baseKey, item.ev, item.occAt)
         const deliveryKey = `${sub.endpoint}|${occurrenceKey}`
@@ -192,8 +277,8 @@ Deno.serve(async (req) => {
           await webpush.sendNotification(
             sub.subscription as webpush.PushSubscription,
             JSON.stringify({
-              title: item.ev.title || 'Recordatorio',
-              body: `${item.occAt.toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' })} · ${repeatSummary(item.ev)}`,
+              title: notificationTitle(item.ev),
+              body: notificationBody(item.ev, item.occAt, timeZone),
               tag: occurrenceKey,
               url: '/',
             }),
@@ -206,11 +291,11 @@ Deno.serve(async (req) => {
         } catch (err) {
           const statusCode = (err as { statusCode?: number }).statusCode
           const message = err instanceof Error ? err.message : String(err)
-          if (statusCode === 404 || statusCode === 410) {
+          sub.last_error = message
+          sub.updated_at = new Date().toISOString()
+          dirty = true
+          if (statusCode === 400 || statusCode === 403 || statusCode === 404 || statusCode === 410) {
             sub.active = false
-            sub.last_error = message
-            sub.updated_at = new Date().toISOString()
-            dirty = true
           }
         }
       }
