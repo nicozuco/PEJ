@@ -2449,10 +2449,11 @@ function HoyMental({mental,setMental,readOnly,dateKey}){
     try{localStorage.setItem(reflexKey,JSON.stringify(v));pushRemote(reflexKey);}catch{}
   };
   const goodCount=mental.filter(m=>m.state==='bien').length;
+  const regularCount=mental.filter(m=>m.state==='regular').length;
   const badCount=mental.filter(m=>m.state==='mal').length;
-  const pendingCount=mental.length-goodCount-badCount;
-  const markedCount=goodCount+badCount;
-  const score=markedCount>0?+(goodCount/markedCount*10).toFixed(1):0;
+  const pendingCount=mental.length-goodCount-regularCount-badCount;
+  const markedCount=goodCount+regularCount+badCount;
+  const score=markedCount>0?+((goodCount+regularCount*0.5)/markedCount*10).toFixed(1):0;
   function toggle(id,state){if(readOnly)return;setMental(prev=>prev.map(m=>m.id===id?{...m,state:m.state===state?null:state}:m));}
   function addItem(){if(readOnly||!newLabel.trim())return;
     const id='m'+Date.now();
@@ -2472,17 +2473,17 @@ function HoyMental({mental,setMental,readOnly,dateKey}){
                 {score.toFixed(1)}<span style={{fontSize:18,color:'var(--text-3)',fontWeight:500}}>/10</span>
               </div>
             </div>
-            <Chip tint="var(--sys-green)">{goodCount} bien · {badCount} mal{pendingCount?` · ${pendingCount} pendientes`:''}</Chip>
+            <Chip tint="var(--sys-green)">{goodCount} bien · {regularCount} regular · {badCount} mal{pendingCount?` · ${pendingCount} pendientes`:''}</Chip>
           </div>
         </Card>
-        <Card radius={22} padding={18} style={{background:'var(--surface-ink)',border:'0.5px solid rgba(255,255,255,0.08)'}}>
-          <div style={{fontSize:11,fontWeight:600,color:'rgba(255,255,255,0.45)',letterSpacing:1,textTransform:'uppercase',marginBottom:12}}>
+        <Card radius={22} padding={18}>
+          <div style={{fontSize:11,fontWeight:600,color:'var(--text-3)',letterSpacing:1,textTransform:'uppercase',marginBottom:12}}>
             Recordatorios
           </div>
           {['No necesitas operar hoy.','Protege tu capital ante todo.','No persigas el precio.','Sigue tu plan.'].map((r,i)=><div key={i}
-            style={{display:'flex',gap:10,padding:'8px 0',borderTop:i>0?'0.5px solid rgba(255,255,255,0.06)':'none'}}>
-            <span style={{fontSize:11,color:'rgba(96,165,250,0.8)',minWidth:18}}>0{i+1}</span>
-            <span style={{fontSize:13,color:'rgba(255,255,255,0.72)',fontStyle:'italic',lineHeight:1.5}}>{r}</span>
+            style={{display:'flex',gap:10,padding:'8px 0',borderTop:i>0?'0.5px solid var(--separator)':'none'}}>
+            <span style={{fontSize:11,color:'var(--accent)',minWidth:18}}>0{i+1}</span>
+            <span style={{fontSize:13,color:'var(--text-2)',fontStyle:'italic',lineHeight:1.5}}>{r}</span>
           </div>)}
         </Card>
       </div>
@@ -2506,17 +2507,17 @@ function HoyMental({mental,setMental,readOnly,dateKey}){
           </div>:mental.map((f,i)=><div key={f.id} style={{display:'flex',alignItems:'center',gap:14,padding:'14px 18px',
             borderBottom:i<mental.length-1?'0.5px solid var(--separator)':'none'}}>
             <div style={{width:8,height:8,borderRadius:4,flexShrink:0,
-              background:f.state==='bien'?'var(--sys-green)':f.state==='mal'?'var(--sys-red)':'var(--separator-strong)'}}/>
+              background:f.state==='bien'?'var(--sys-green)':f.state==='regular'?'var(--sys-amber)':f.state==='mal'?'var(--sys-red)':'var(--separator-strong)'}}/>
             <div style={{flex:1,minWidth:0}}>
               <div style={{fontSize:15,fontWeight:500,color:'var(--text-1)',letterSpacing:-0.2,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{f.label}</div>
               {f.desc&&<div style={{fontSize:12,color:'var(--text-3)',marginTop:2}}>{f.desc}</div>}
             </div>
             {!readOnly&&<div style={{display:'flex',gap:4,alignItems:'center'}}>
-              {['bien','mal'].map(s=><button key={s} onClick={()=>toggle(f.id,s)} style={{
+              {['bien','regular','mal'].map(s=><button key={s} onClick={()=>toggle(f.id,s)} style={{
                 padding:'5px 10px',borderRadius:7,fontSize:11,fontWeight:600,
-                background:f.state===s?(s==='bien'?'var(--sys-green-soft)':'var(--sys-red-soft)'):'var(--fill-1)',
-                color:f.state===s?(s==='bien'?'var(--sys-green)':'var(--sys-red)'):'var(--text-3)'}}>
-                {s==='bien'?'Bien':'Mal'}
+                background:f.state===s?(s==='bien'?'var(--sys-green-soft)':s==='regular'?'var(--sys-amber-soft)':'var(--sys-red-soft)'):'var(--fill-1)',
+                color:f.state===s?(s==='bien'?'var(--sys-green)':s==='regular'?'var(--sys-amber)':'var(--sys-red)'):'var(--text-3)'}}>
+                {s==='bien'?'Bien':s==='regular'?'Regular':'Mal'}
               </button>)}
               <button onClick={()=>removeItem(f.id)} aria-label="Eliminar" style={{
                 width:22,height:22,borderRadius:11,marginLeft:2,background:'var(--fill-1)',
@@ -4225,33 +4226,78 @@ function BovedaGastos({cats,setCats,recurring,setRecurring}){
 function BovedaPasswords({passwords,setPasswords}){
   const isD=useD();
   const[search,setSearch]=useState('');
-  const[revealId,setRevealId]=useState(null);
-  const[adding,setAdding]=useState(false);
-  const[draft,setDraft]=useState({title:'',user:'',pwd:'',url:'',note:''});
+  const[expanded,setExpanded]=useState({});       // groupId -> bool
+  const[revealAcc,setRevealAcc]=useState(null);   // accountId currently revealed
+  const[addingGroup,setAddingGroup]=useState(false);
+  const[newGroupTitle,setNewGroupTitle]=useState('');
+  const[addingAccTo,setAddingAccTo]=useState(null); // groupId currently in "new account" mode
+  const[accDraft,setAccDraft]=useState({label:'',user:'',pwd:'',url:'',note:''});
 
-  const list=Array.isArray(passwords)?passwords:[];
-  const filtered=search.trim()
-    ?list.filter(p=>(p.title||'').toLowerCase().includes(search.toLowerCase())||(p.user||'').toLowerCase().includes(search.toLowerCase())||(p.url||'').toLowerCase().includes(search.toLowerCase()))
-    :list;
+  // Migración: si hay entradas planas heredadas (con .pwd y sin .accounts), las envolvemos como grupo con 1 cuenta.
+  React.useEffect(()=>{
+    const list=Array.isArray(passwords)?passwords:[];
+    if(list.length===0)return;
+    const needs=list.some(p=>!Array.isArray(p.accounts));
+    if(!needs)return;
+    const migrated=list.map(p=>{
+      if(Array.isArray(p.accounts))return p;
+      return{
+        id:p.id||('g'+Date.now().toString(36)+Math.random().toString(36).slice(2,6)),
+        title:p.title||'Sin nombre',
+        accounts:[{
+          id:'a'+Date.now().toString(36)+Math.random().toString(36).slice(2,6),
+          label:p.user||'Cuenta',
+          user:p.user||'',pwd:p.pwd||'',url:p.url||'',note:p.note||'',
+        }],
+      };
+    });
+    setPasswords(migrated);
+  },[]); // solo al montar
 
-  const addPwd=()=>{
-    if(!draft.title.trim())return;
-    const id='p'+Date.now().toString(36)+Math.random().toString(36).slice(2,6);
-    setPasswords(prev=>[...(prev||[]),{id,...draft,title:draft.title.trim()}]);
-    setDraft({title:'',user:'',pwd:'',url:'',note:''});
-    setAdding(false);
+  const groups=(Array.isArray(passwords)?passwords:[]).filter(g=>Array.isArray(g.accounts));
+  const q=search.trim().toLowerCase();
+  const matchAcc=a=>!q||(a.label||'').toLowerCase().includes(q)||(a.user||'').toLowerCase().includes(q)||(a.url||'').toLowerCase().includes(q);
+  const filtered=q
+    ?groups.map(g=>{
+        const titleHit=(g.title||'').toLowerCase().includes(q);
+        const accs=titleHit?g.accounts:g.accounts.filter(matchAcc);
+        return accs.length||titleHit?{...g,accounts:accs}:null;
+      }).filter(Boolean)
+    :groups;
+
+  const uid=p=>p+Date.now().toString(36)+Math.random().toString(36).slice(2,6);
+
+  const addGroup=()=>{
+    const t=newGroupTitle.trim();if(!t)return;
+    const id=uid('g');
+    setPasswords(prev=>[...(prev||[]),{id,title:t,accounts:[]}]);
+    setExpanded(e=>({...e,[id]:true}));
+    setAddingAccTo(id);
+    setNewGroupTitle('');setAddingGroup(false);
   };
-  const updatePwd=(id,patch)=>setPasswords(prev=>(prev||[]).map(p=>p.id===id?{...p,...patch}:p));
-  const removePwd=id=>{
-    if(!confirm('¿Eliminar esta entrada?'))return;
-    setPasswords(prev=>(prev||[]).filter(p=>p.id!==id));
+  const updateGroup=(gid,patch)=>setPasswords(prev=>(prev||[]).map(g=>g.id===gid?{...g,...patch}:g));
+  const removeGroup=gid=>{
+    if(!confirm('¿Eliminar este apartado y todas sus cuentas?'))return;
+    setPasswords(prev=>(prev||[]).filter(g=>g.id!==gid));
   };
-  const copy=async(text)=>{
-    if(!text)return;
-    try{await navigator.clipboard.writeText(text);}catch{}
+  const addAccount=gid=>{
+    if(!accDraft.label.trim()&&!accDraft.user.trim())return;
+    const acc={id:uid('a'),...accDraft,label:accDraft.label.trim()||accDraft.user.trim()};
+    setPasswords(prev=>(prev||[]).map(g=>g.id===gid?{...g,accounts:[...(g.accounts||[]),acc]}:g));
+    setAccDraft({label:'',user:'',pwd:'',url:'',note:''});
+    setAddingAccTo(null);
   };
+  const updateAccount=(gid,aid,patch)=>setPasswords(prev=>(prev||[]).map(g=>
+    g.id===gid?{...g,accounts:g.accounts.map(a=>a.id===aid?{...a,...patch}:a)}:g));
+  const removeAccount=(gid,aid)=>{
+    if(!confirm('¿Eliminar esta cuenta?'))return;
+    setPasswords(prev=>(prev||[]).map(g=>g.id===gid?{...g,accounts:g.accounts.filter(a=>a.id!==aid)}:g));
+  };
+  const copy=async t=>{if(!t)return;try{await navigator.clipboard.writeText(t);}catch{}};
 
   const px=isD?52:14;
+  const inputCSS={fontSize:14,padding:'10px 12px',background:'var(--fill-1)',border:'none',outline:'none',borderRadius:10,color:'var(--text-1)',fontFamily:'inherit'};
+  const iconBtn=(color)=>({width:30,height:30,borderRadius:8,background:'var(--fill-1)',border:'none',cursor:'pointer',display:'flex',alignItems:'center',justifyContent:'center',color:color||'var(--text-2)',flexShrink:0});
 
   return<div style={{padding:`0 ${px}px`,display:'flex',flexDirection:'column',gap:14}}>
     <div style={{padding:'10px 14px',borderRadius:12,background:'var(--sys-amber-soft)',
@@ -4266,96 +4312,150 @@ function BovedaPasswords({passwords,setPasswords}){
       <div style={{display:'flex',alignItems:'center',gap:8,padding:'10px 14px'}}>
         <span style={{color:'var(--text-3)',display:'flex'}}><ISearch size={16}/></span>
         <input value={search} onChange={e=>setSearch(e.target.value)}
-          placeholder="Buscar…"
+          placeholder="Buscar apartado o cuenta…"
           style={{flex:1,fontSize:14,background:'transparent',border:'none',outline:'none',color:'var(--text-1)',fontFamily:'inherit'}}/>
       </div>
     </Card>
 
-    {!adding?<button onClick={()=>setAdding(true)} style={{
+    {!addingGroup?<button onClick={()=>setAddingGroup(true)} style={{
       padding:'12px 16px',borderRadius:14,background:'var(--accent-soft)',color:'var(--accent)',
       border:'none',cursor:'pointer',fontSize:14,fontWeight:600,display:'flex',alignItems:'center',gap:8,justifyContent:'center'}}>
-      <IPlus size={16}/> Nueva contraseña
+      <IPlus size={16}/> Nuevo apartado
     </button>:<Card padding={14} radius={16}>
       <div style={{display:'flex',flexDirection:'column',gap:10}}>
-        <input value={draft.title} onChange={e=>setDraft(d=>({...d,title:e.target.value}))}
-          placeholder="Título (p. ej. GitHub)" autoFocus
-          style={{fontSize:14,padding:'10px 12px',background:'var(--fill-1)',border:'none',outline:'none',borderRadius:10,color:'var(--text-1)'}}/>
-        <input value={draft.user} onChange={e=>setDraft(d=>({...d,user:e.target.value}))}
-          placeholder="Usuario o email"
-          style={{fontSize:14,padding:'10px 12px',background:'var(--fill-1)',border:'none',outline:'none',borderRadius:10,color:'var(--text-1)'}}/>
-        <input value={draft.pwd} onChange={e=>setDraft(d=>({...d,pwd:e.target.value}))}
-          placeholder="Contraseña" type="text"
-          style={{fontSize:14,padding:'10px 12px',background:'var(--fill-1)',border:'none',outline:'none',borderRadius:10,color:'var(--text-1)',fontFamily:'ui-monospace,SF Mono'}}/>
-        <input value={draft.url} onChange={e=>setDraft(d=>({...d,url:e.target.value}))}
-          placeholder="URL (opcional)"
-          style={{fontSize:14,padding:'10px 12px',background:'var(--fill-1)',border:'none',outline:'none',borderRadius:10,color:'var(--text-1)'}}/>
-        <textarea value={draft.note} onChange={e=>setDraft(d=>({...d,note:e.target.value}))}
-          placeholder="Nota (opcional)" rows={2}
-          style={{fontSize:14,padding:'10px 12px',background:'var(--fill-1)',border:'none',outline:'none',borderRadius:10,color:'var(--text-1)',fontFamily:'inherit',resize:'vertical'}}/>
+        <input value={newGroupTitle} onChange={e=>setNewGroupTitle(e.target.value)}
+          onKeyDown={e=>e.key==='Enter'&&addGroup()}
+          placeholder="Nombre del apartado (p. ej. Netflix, Gmail)" autoFocus style={inputCSS}/>
         <div style={{display:'flex',gap:8,justifyContent:'flex-end'}}>
-          <button onClick={()=>{setAdding(false);setDraft({title:'',user:'',pwd:'',url:'',note:''});}}
+          <button onClick={()=>{setAddingGroup(false);setNewGroupTitle('');}}
             style={{padding:'8px 14px',borderRadius:10,background:'var(--fill-1)',color:'var(--text-2)',border:'none',cursor:'pointer',fontSize:13,fontWeight:500}}>
             Cancelar
           </button>
-          <button onClick={addPwd} disabled={!draft.title.trim()} style={{
+          <button onClick={addGroup} disabled={!newGroupTitle.trim()} style={{
             padding:'8px 14px',borderRadius:10,
-            background:draft.title.trim()?'var(--accent)':'var(--fill-1)',
-            color:draft.title.trim()?'#fff':'var(--text-3)',
-            border:'none',cursor:draft.title.trim()?'pointer':'default',fontSize:13,fontWeight:600}}>
-            Guardar
+            background:newGroupTitle.trim()?'var(--accent)':'var(--fill-1)',
+            color:newGroupTitle.trim()?'#fff':'var(--text-3)',
+            border:'none',cursor:newGroupTitle.trim()?'pointer':'default',fontSize:13,fontWeight:600}}>
+            Crear
           </button>
         </div>
       </div>
     </Card>}
 
     {filtered.length===0?<div style={{padding:'20px',fontSize:13,color:'var(--text-3)',textAlign:'center'}}>
-      {search?'Sin resultados':'Sin contraseñas guardadas'}
-    </div>:filtered.map(p=>{
-      const open=revealId===p.id;
-      return<Card key={p.id} padding={14} radius={14}>
-        <div style={{display:'flex',alignItems:'center',gap:10}}>
+      {q?'Sin resultados':'Sin apartados todavía'}
+    </div>:filtered.map(g=>{
+      const isOpen=!!expanded[g.id]||!!q;
+      const addingHere=addingAccTo===g.id;
+      return<Card key={g.id} padding={0} radius={16}>
+        <div style={{display:'flex',alignItems:'center',gap:10,padding:'12px 14px',cursor:'pointer'}}
+          onClick={()=>setExpanded(e=>({...e,[g.id]:!isOpen}))}>
           <div style={{width:34,height:34,borderRadius:8,background:'var(--accent-soft)',color:'var(--accent)',
             display:'flex',alignItems:'center',justifyContent:'center',fontWeight:700,fontSize:14,flexShrink:0}}>
-            {(p.title||'?').charAt(0).toUpperCase()}
+            {(g.title||'?').charAt(0).toUpperCase()}
           </div>
           <div style={{flex:1,minWidth:0}}>
-            <div style={{fontSize:14,fontWeight:600,color:'var(--text-1)',letterSpacing:-0.15,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{p.title}</div>
-            {p.user&&<div style={{fontSize:12,color:'var(--text-3)',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{p.user}</div>}
+            <div style={{fontSize:14,fontWeight:600,color:'var(--text-1)',letterSpacing:-0.15,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{g.title}</div>
+            <div style={{fontSize:12,color:'var(--text-3)'}}>{g.accounts.length} {g.accounts.length===1?'cuenta':'cuentas'}</div>
           </div>
-          <button onClick={()=>setRevealId(open?null:p.id)} style={{
-            width:30,height:30,borderRadius:8,background:'var(--fill-1)',border:'none',cursor:'pointer',
-            display:'flex',alignItems:'center',justifyContent:'center',color:'var(--text-2)'}}>
-            {open?<IEyeOff size={15}/>:<IEye size={15}/>}
-          </button>
-          <button onClick={()=>copy(p.pwd)} aria-label="Copiar" style={{
-            width:30,height:30,borderRadius:8,background:'var(--fill-1)',border:'none',cursor:'pointer',
-            display:'flex',alignItems:'center',justifyContent:'center',color:'var(--text-2)'}}>
-            <ICopy size={14}/>
-          </button>
-          <button onClick={()=>removePwd(p.id)} aria-label="Eliminar" style={{
-            width:30,height:30,borderRadius:8,background:'var(--fill-1)',border:'none',cursor:'pointer',
-            display:'flex',alignItems:'center',justifyContent:'center',color:'var(--sys-red)'}}>
-            ×
-          </button>
+          <button onClick={e=>{e.stopPropagation();removeGroup(g.id);}} aria-label="Eliminar apartado"
+            style={iconBtn('var(--sys-red)')}>×</button>
+          <span style={{color:'var(--text-3)',display:'flex',transform:isOpen?'rotate(90deg)':'none',transition:'transform .15s'}}>
+            <IChev size={16}/>
+          </span>
         </div>
-        {open&&<div style={{marginTop:12,paddingTop:12,borderTop:'0.5px solid var(--separator)',display:'flex',flexDirection:'column',gap:8}}>
-          <div style={{display:'flex',alignItems:'center',gap:8}}>
-            <div style={{fontSize:11,color:'var(--text-3)',textTransform:'uppercase',letterSpacing:0.5,minWidth:62}}>Contraseña</div>
-            <input value={p.pwd||''} onChange={e=>updatePwd(p.id,{pwd:e.target.value})}
-              style={{flex:1,fontSize:13,padding:'6px 10px',background:'var(--fill-1)',border:'none',outline:'none',borderRadius:8,color:'var(--text-1)',fontFamily:'ui-monospace,SF Mono'}}/>
-          </div>
-          {(p.url||open)&&<div style={{display:'flex',alignItems:'center',gap:8}}>
-            <div style={{fontSize:11,color:'var(--text-3)',textTransform:'uppercase',letterSpacing:0.5,minWidth:62}}>URL</div>
-            <input value={p.url||''} onChange={e=>updatePwd(p.id,{url:e.target.value})}
-              placeholder="https://…"
-              style={{flex:1,fontSize:13,padding:'6px 10px',background:'var(--fill-1)',border:'none',outline:'none',borderRadius:8,color:'var(--text-1)'}}/>
+
+        {isOpen&&<div style={{borderTop:'0.5px solid var(--separator)',display:'flex',flexDirection:'column'}}>
+          {g.accounts.length===0&&!addingHere&&<div style={{padding:'14px',fontSize:12,color:'var(--text-3)',textAlign:'center',fontStyle:'italic'}}>
+            Sin cuentas en este apartado
           </div>}
-          <div style={{display:'flex',alignItems:'flex-start',gap:8}}>
-            <div style={{fontSize:11,color:'var(--text-3)',textTransform:'uppercase',letterSpacing:0.5,minWidth:62,marginTop:6}}>Nota</div>
-            <textarea value={p.note||''} onChange={e=>updatePwd(p.id,{note:e.target.value})}
-              placeholder="—" rows={2}
-              style={{flex:1,fontSize:13,padding:'6px 10px',background:'var(--fill-1)',border:'none',outline:'none',borderRadius:8,color:'var(--text-1)',fontFamily:'inherit',resize:'vertical'}}/>
-          </div>
+
+          {g.accounts.map(a=>{
+            const open=revealAcc===a.id;
+            return<div key={a.id} style={{padding:'12px 14px',borderTop:'0.5px solid var(--separator)'}}>
+              <div style={{display:'flex',alignItems:'center',gap:8}}>
+                <div style={{width:28,height:28,borderRadius:14,background:'var(--fill-1)',color:'var(--text-2)',
+                  display:'flex',alignItems:'center',justifyContent:'center',fontWeight:600,fontSize:12,flexShrink:0}}>
+                  {(a.label||a.user||'?').charAt(0).toUpperCase()}
+                </div>
+                <div style={{flex:1,minWidth:0}}>
+                  <div style={{fontSize:13.5,fontWeight:600,color:'var(--text-1)',letterSpacing:-0.1,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{a.label||'Sin nombre'}</div>
+                  {a.user&&<div style={{fontSize:11.5,color:'var(--text-3)',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{a.user}</div>}
+                </div>
+                <button onClick={()=>setRevealAcc(open?null:a.id)} style={iconBtn()} aria-label="Ver">
+                  {open?<IEyeOff size={15}/>:<IEye size={15}/>}
+                </button>
+                <button onClick={()=>copy(a.pwd)} style={iconBtn()} aria-label="Copiar contraseña">
+                  <ICopy size={14}/>
+                </button>
+                <button onClick={()=>removeAccount(g.id,a.id)} style={iconBtn('var(--sys-red)')} aria-label="Eliminar cuenta">×</button>
+              </div>
+              {open&&<div style={{marginTop:10,paddingTop:10,borderTop:'0.5px solid var(--separator)',display:'flex',flexDirection:'column',gap:8}}>
+                <div style={{display:'flex',alignItems:'center',gap:8}}>
+                  <div style={{fontSize:11,color:'var(--text-3)',textTransform:'uppercase',letterSpacing:0.5,minWidth:70}}>Nombre</div>
+                  <input value={a.label||''} onChange={e=>updateAccount(g.id,a.id,{label:e.target.value})}
+                    placeholder="Nico, Papi…"
+                    style={{flex:1,fontSize:13,padding:'6px 10px',background:'var(--fill-1)',border:'none',outline:'none',borderRadius:8,color:'var(--text-1)'}}/>
+                </div>
+                <div style={{display:'flex',alignItems:'center',gap:8}}>
+                  <div style={{fontSize:11,color:'var(--text-3)',textTransform:'uppercase',letterSpacing:0.5,minWidth:70}}>Usuario</div>
+                  <input value={a.user||''} onChange={e=>updateAccount(g.id,a.id,{user:e.target.value})}
+                    placeholder="correo o usuario"
+                    style={{flex:1,fontSize:13,padding:'6px 10px',background:'var(--fill-1)',border:'none',outline:'none',borderRadius:8,color:'var(--text-1)'}}/>
+                </div>
+                <div style={{display:'flex',alignItems:'center',gap:8}}>
+                  <div style={{fontSize:11,color:'var(--text-3)',textTransform:'uppercase',letterSpacing:0.5,minWidth:70}}>Contraseña</div>
+                  <input value={a.pwd||''} onChange={e=>updateAccount(g.id,a.id,{pwd:e.target.value})}
+                    style={{flex:1,fontSize:13,padding:'6px 10px',background:'var(--fill-1)',border:'none',outline:'none',borderRadius:8,color:'var(--text-1)',fontFamily:'ui-monospace,SF Mono'}}/>
+                </div>
+                <div style={{display:'flex',alignItems:'center',gap:8}}>
+                  <div style={{fontSize:11,color:'var(--text-3)',textTransform:'uppercase',letterSpacing:0.5,minWidth:70}}>URL</div>
+                  <input value={a.url||''} onChange={e=>updateAccount(g.id,a.id,{url:e.target.value})}
+                    placeholder="https://…"
+                    style={{flex:1,fontSize:13,padding:'6px 10px',background:'var(--fill-1)',border:'none',outline:'none',borderRadius:8,color:'var(--text-1)'}}/>
+                </div>
+                <div style={{display:'flex',alignItems:'flex-start',gap:8}}>
+                  <div style={{fontSize:11,color:'var(--text-3)',textTransform:'uppercase',letterSpacing:0.5,minWidth:70,marginTop:6}}>Nota</div>
+                  <textarea value={a.note||''} onChange={e=>updateAccount(g.id,a.id,{note:e.target.value})}
+                    placeholder="—" rows={2}
+                    style={{flex:1,fontSize:13,padding:'6px 10px',background:'var(--fill-1)',border:'none',outline:'none',borderRadius:8,color:'var(--text-1)',fontFamily:'inherit',resize:'vertical'}}/>
+                </div>
+              </div>}
+            </div>;
+          })}
+
+          {addingHere?<div style={{padding:'12px 14px',borderTop:'0.5px solid var(--separator)',display:'flex',flexDirection:'column',gap:8,background:'var(--fill-1)'}}>
+            <input value={accDraft.label} onChange={e=>setAccDraft(d=>({...d,label:e.target.value}))}
+              placeholder="Nombre (Nico, Papi…)" autoFocus
+              style={{...inputCSS,background:'var(--surface-1)'}}/>
+            <input value={accDraft.user} onChange={e=>setAccDraft(d=>({...d,user:e.target.value}))}
+              placeholder="Correo o usuario"
+              style={{...inputCSS,background:'var(--surface-1)'}}/>
+            <input value={accDraft.pwd} onChange={e=>setAccDraft(d=>({...d,pwd:e.target.value}))}
+              placeholder="Contraseña"
+              style={{...inputCSS,background:'var(--surface-1)',fontFamily:'ui-monospace,SF Mono'}}/>
+            <input value={accDraft.url} onChange={e=>setAccDraft(d=>({...d,url:e.target.value}))}
+              placeholder="URL (opcional)"
+              style={{...inputCSS,background:'var(--surface-1)'}}/>
+            <div style={{display:'flex',gap:8,justifyContent:'flex-end'}}>
+              <button onClick={()=>{setAddingAccTo(null);setAccDraft({label:'',user:'',pwd:'',url:'',note:''});}}
+                style={{padding:'8px 14px',borderRadius:10,background:'var(--surface-1)',color:'var(--text-2)',border:'none',cursor:'pointer',fontSize:13,fontWeight:500}}>
+                Cancelar
+              </button>
+              <button onClick={()=>addAccount(g.id)} disabled={!accDraft.label.trim()&&!accDraft.user.trim()} style={{
+                padding:'8px 14px',borderRadius:10,
+                background:(accDraft.label.trim()||accDraft.user.trim())?'var(--accent)':'var(--surface-1)',
+                color:(accDraft.label.trim()||accDraft.user.trim())?'#fff':'var(--text-3)',
+                border:'none',cursor:(accDraft.label.trim()||accDraft.user.trim())?'pointer':'default',fontSize:13,fontWeight:600}}>
+                Añadir cuenta
+              </button>
+            </div>
+          </div>:<button onClick={()=>{setAddingAccTo(g.id);setAccDraft({label:'',user:'',pwd:'',url:'',note:''});}}
+            style={{padding:'10px 14px',borderTop:'0.5px solid var(--separator)',background:'transparent',
+              border:'none',cursor:'pointer',color:'var(--accent)',fontSize:13,fontWeight:600,
+              display:'flex',alignItems:'center',gap:6,justifyContent:'center'}}>
+            <IPlus size={14}/> Añadir cuenta
+          </button>}
         </div>}
       </Card>;
     })}
