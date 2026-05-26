@@ -11,7 +11,9 @@
 <meta name="apple-mobile-web-app-title" content="Zuppi's Agenda"/>
 <style>
 :root {
-  --accent:#3B82F6; --accent-soft:rgba(59,130,246,0.12); --accent-soft-strong:rgba(59,130,246,0.28);
+  --accent:#3B82F6; --accent-ink:#FFFFFF; --accent-soft:rgba(59,130,246,0.12); --accent-soft-strong:rgba(59,130,246,0.28);
+  --logo-bg-1:#1B2A4E; --logo-bg-2:#0A1428; --logo-bg-3:#060B1A;
+  --logo-glow:#60A5FA; --logo-mark-1:#F8FAFF; --logo-mark-2:#A7C0FF;
   --app-bg:#F2F2F7; --surface-1:#FFFFFF; --surface-ink:#111318;
   --fill-1:rgba(120,120,128,0.10); --fill-2:rgba(120,120,128,0.14);
   --text-1:#0A0D14; --text-2:#3A3D46; --text-3:#8A8D96;
@@ -24,6 +26,14 @@
   --sys-red:#FF3B30; --sys-red-soft:rgba(255,59,48,0.14);
   --sys-orange:#FF6A00; --sys-purple:#AF52DE;
   --sys-indigo:#5E5CE6; --sys-indigo-soft:rgba(94,92,230,0.12); --sys-indigo-soft-strong:rgba(94,92,230,0.25);
+  --score-good:var(--sys-green); --score-good-soft:var(--sys-green-soft);
+  --score-mid:var(--sys-amber); --score-mid-soft:var(--sys-amber-soft);
+  --score-low:var(--sys-red); --score-low-soft:var(--sys-red-soft);
+  --day-festivo:#8E8E93; --day-festivo-soft:rgba(142,142,147,0.14); --day-festivo-border:rgba(142,142,147,0.36);
+  --day-vacaciones:#8E8E93; --day-vacaciones-soft:rgba(142,142,147,0.14); --day-vacaciones-border:rgba(142,142,147,0.36);
+  --day-mantenimiento:#8E8E93; --day-mantenimiento-soft:rgba(142,142,147,0.14); --day-mantenimiento-border:rgba(142,142,147,0.36);
+  --weekend-color:#8E8E93; --weekend-soft:rgba(142,142,147,0.14);
+  --calendar-cell-bg:rgba(120,120,128,0.10); --calendar-cell-border:rgba(60,60,67,0.10);
   --sidebar-w:260px;
   --content-max:1180px;
 }
@@ -39,6 +49,10 @@ body{height:100dvh}
 .scroll::-webkit-scrollbar{display:none}
 button{cursor:pointer;border:none;background:none;font-family:inherit;color:inherit;-webkit-tap-highlight-color:transparent}
 input,textarea{font-family:inherit;outline:none}
+.zp-notebook-editor,
+.zp-notebook-editor *{color:var(--text-1) !important;-webkit-text-fill-color:var(--text-1) !important}
+.zp-notebook-editor a{color:var(--accent) !important;-webkit-text-fill-color:var(--accent) !important}
+.zp-notebook-editor:empty::before{content:attr(data-placeholder);color:var(--text-3);-webkit-text-fill-color:var(--text-3)}
 
 /* Desktop content area */
 .content-area{flex:1;display:flex;flex-direction:column;overflow:hidden;min-width:0}
@@ -246,16 +260,16 @@ function notificationBody(ev,occAt){
   return [time,title,repeat].filter(Boolean).join(' · ');
 }
 const DAY_TYPE_SURFACE={
-  soft:'linear-gradient(135deg,rgba(94,92,230,0.18),rgba(94,92,230,0.07))',
-  border:'rgba(94,92,230,0.42)',
+  soft:'var(--fill-1)',
+  border:'var(--hairline)',
   text:'var(--text-1)',
 };
 const DAY_TYPE_CFG={
-  festivo:{label:'Festivo',color:'#FF2D55',soft:DAY_TYPE_SURFACE.soft,border:DAY_TYPE_SURFACE.border,Icon:p=><ISparkleStar {...p}/>},
-  vacaciones:{label:'Vacaciones',color:'#AF52DE',soft:DAY_TYPE_SURFACE.soft,border:DAY_TYPE_SURFACE.border,Icon:p=><IUmbrella {...p}/>},
-  mantenimiento:{label:'Mantenim.',color:'#5AC8FA',soft:DAY_TYPE_SURFACE.soft,border:DAY_TYPE_SURFACE.border,Icon:p=><IWrench {...p}/>},
+  festivo:{label:'Festivo',color:'var(--day-festivo)',soft:'var(--day-festivo-soft)',border:'var(--day-festivo-border)',Icon:p=><ISparkleStar {...p}/>},
+  vacaciones:{label:'Vacaciones',color:'var(--day-vacaciones)',soft:'var(--day-vacaciones-soft)',border:'var(--day-vacaciones-border)',Icon:p=><IUmbrella {...p}/>},
+  mantenimiento:{label:'Mantenim.',color:'var(--day-mantenimiento)',soft:'var(--day-mantenimiento-soft)',border:'var(--day-mantenimiento-border)',Icon:p=><IWrench {...p}/>},
 };
-const WEEKEND_CFG={label:'Fin de semana',color:'#8E8E93',soft:'rgba(142,142,147,0.14)'};
+const WEEKEND_CFG={label:'Fin de semana',color:'var(--weekend-color)',soft:'var(--weekend-soft)'};
 function isWeekendKey(key){
   if(!key)return false;
   const d=parseDateKeyLocal(key);
@@ -858,8 +872,8 @@ function calcScore(habits,tasks,mental){
   if(!hasH)return null;
   return+(habits.filter(x=>x.done).length/habits.length*10).toFixed(1);
 }
-function scoreHue(s){if(s==null)return'var(--text-3)';if(s>=8)return'var(--sys-green)';if(s>=6)return'var(--sys-amber)';return'var(--sys-red)';}
-function scoreHueSoft(s){if(s==null)return'transparent';if(s>=8)return'var(--sys-green-soft)';if(s>=6)return'var(--sys-amber-soft)';return'var(--sys-red-soft)';}
+function scoreHue(s){if(s==null)return'var(--text-3)';if(s>=8)return'var(--score-good)';if(s>=6)return'var(--score-mid)';return'var(--score-low)';}
+function scoreHueSoft(s){if(s==null)return'transparent';if(s>=8)return'var(--score-good-soft)';if(s>=6)return'var(--score-mid-soft)';return'var(--score-low-soft)';}
 
 // ── Default data ──────────────────────────────────────────────────────────────
 const DEF_HABITS=[];
@@ -1469,16 +1483,16 @@ const IReflection=p=><IB {...p}><path d="M3 5.5c3-.5 6-.5 9 1v13c-3-1.5-6-1.5-9-
 const ZuppejIcon=({size=32})=>(
   <div style={{width:size,height:size,borderRadius:size*0.225,position:'relative',overflow:'hidden',
     boxShadow:`0 ${size*0.06}px ${size*0.14}px rgba(0,0,0,0.22)`}}>
-    <div style={{position:'absolute',inset:0,background:'linear-gradient(155deg,#1B2A4E 0%,#0A1428 55%,#060B1A 100%)'}}/>
-    <div style={{position:'absolute',inset:0,background:'radial-gradient(ellipse at 30% 20%,rgba(96,165,250,0.35) 0%,transparent 60%)'}}/>
+    <div style={{position:'absolute',inset:0,background:'linear-gradient(155deg,var(--logo-bg-1) 0%,var(--logo-bg-2) 55%,var(--logo-bg-3) 100%)'}}/>
+    <div style={{position:'absolute',inset:0,background:'radial-gradient(ellipse at 30% 20%,var(--accent-soft-strong) 0%,transparent 62%)'}}/>
     <svg viewBox="0 0 120 120" width={size} height={size} style={{position:'absolute',inset:0}}>
       <defs>
-        <linearGradient id="zg1" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stopColor="#F8FAFF"/><stop offset="1" stopColor="#A7C0FF"/></linearGradient>
-        <linearGradient id="zg2" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stopColor="#60A5FA" stopOpacity="0.85"/><stop offset="1" stopColor="#3B82F6" stopOpacity="0.4"/></linearGradient>
+        <linearGradient id="zg1" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stopColor="var(--logo-mark-1)"/><stop offset="1" stopColor="var(--logo-mark-2)"/></linearGradient>
+        <linearGradient id="zg2" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stopColor="var(--logo-glow)" stopOpacity="0.9"/><stop offset="1" stopColor="var(--accent)" stopOpacity="0.48"/></linearGradient>
       </defs>
       <path d="M24 82 Q60 18 96 82" stroke="url(#zg2)" strokeWidth="4" fill="none" strokeLinecap="round" opacity="0.75"/>
       <path d="M36 42 H82 L40 80 H86" stroke="url(#zg1)" strokeWidth="9" strokeLinecap="round" strokeLinejoin="round" fill="none"/>
-      <circle cx="96" cy="82" r="4.5" fill="#60A5FA"/>
+      <circle cx="96" cy="82" r="4.5" fill="var(--accent)"/>
     </svg>
     <div style={{position:'absolute',inset:0,borderRadius:size*0.225,
       boxShadow:'inset 0 1px 0.5px rgba(255,255,255,0.35)',pointerEvents:'none'}}/>
@@ -1515,7 +1529,7 @@ function ListRow({icon,iconTint,title,subtitle,value,last,onClick,right,destruct
       borderBottom:last?'none':'0.5px solid var(--separator)',cursor:onClick?'pointer':'default',minHeight:46}}>
       {icon&&<div style={{width:28,height:28,borderRadius:7,display:'flex',alignItems:'center',
         justifyContent:'center',background:iconTint||'var(--accent-soft)',
-        color:iconTint?'#fff':'var(--accent)',flexShrink:0}}>{icon}</div>}
+        color:iconTint==='var(--accent)'?'var(--accent-ink)':iconTint?'#fff':'var(--accent)',flexShrink:0}}>{icon}</div>}
       <div style={{flex:1,minWidth:0}}>
         <div style={{fontSize:15,fontWeight:500,letterSpacing:-0.2,
           color:destructive?'var(--sys-red)':'var(--text-1)',lineHeight:1.3}}>{title}</div>
@@ -1771,7 +1785,7 @@ function HoyScreen({habits,setHabits,setHabitTemplate,tasks,setTasks,mental,setM
       {arrowBtn('›',()=>setViewDate(shiftDateKey(viewDate,1)),viewDate>=TODAY_KEY)}
       {!isToday&&<button onClick={()=>setViewDate(TODAY_KEY)} style={{
         marginLeft:'auto',padding:'5px 12px',borderRadius:999,border:'none',
-        background:'var(--accent)',color:'#fff',fontSize:12.5,fontWeight:600,cursor:'pointer'}}>
+        background:'var(--accent)',color:'var(--accent-ink)',fontSize:12.5,fontWeight:600,cursor:'pointer'}}>
         Hoy
       </button>}
     </div>
@@ -1782,7 +1796,7 @@ function HoyScreen({habits,setHabits,setHabitTemplate,tasks,setTasks,mental,setM
         {HTABS.map(t=><button key={t.id} onClick={()=>setTab(t.id)} style={{
           padding:'5px 12px',borderRadius:999,flexShrink:0,
           background:tab===t.id?'var(--accent)':'var(--fill-1)',
-          color:tab===t.id?'#fff':'var(--text-2)',
+          color:tab===t.id?'var(--accent-ink)':'var(--text-2)',
           fontSize:12.5,fontWeight:tab===t.id?600:500,letterSpacing:-0.1}}>
           {t.label}
         </button>)}
@@ -1952,7 +1966,7 @@ function HoyDashboard({score,habits,setHabits,tasks,setTasks,mental,streak,readO
   const InsightBanner=<div style={{padding:'14px 16px',borderRadius:16,
     background:'linear-gradient(135deg,var(--accent-soft),transparent)',
     border:'0.5px solid var(--accent-soft-strong)',display:'flex',gap:12,alignItems:'flex-start'}}>
-    <div style={{flexShrink:0,width:30,height:30,borderRadius:9,background:'var(--accent)',color:'#fff',
+    <div style={{flexShrink:0,width:30,height:30,borderRadius:9,background:'var(--accent)',color:'var(--accent-ink)',
       display:'flex',alignItems:'center',justifyContent:'center'}}><ISparkle size={16}/></div>
     <div>
       <div style={{fontSize:13,fontWeight:600,color:'var(--text-1)',marginBottom:2}}>Vas en racha</div>
@@ -2142,7 +2156,7 @@ function HoyTareas({tasks,setTasks,showCompleted=true,readOnly=false}){
             border:t.done?'none':`1.5px solid ${laneColor}`,
             background:t.done?laneColor:'var(--surface-1)',
             boxShadow:t.done?'none':`0 0 0 2px ${laneColor}14`,
-            display:'flex',alignItems:'center',justifyContent:'center',color:'#fff'}}>
+            display:'flex',alignItems:'center',justifyContent:'center',color:laneColor==='var(--accent)'?'var(--accent-ink)':'#fff'}}>
           {t.done&&<ICheck size={11}/>}
         </button>}
         {isEditing
@@ -2155,8 +2169,8 @@ function HoyTareas({tasks,setTasks,showCompleted=true,readOnly=false}){
               textDecoration:t.done?'line-through':'none',letterSpacing:-0.1,lineHeight:1.4}}>
             {t.text}
             {(()=>{const od=t.createdDate&&t.createdDate<TODAY_KEY?t.createdDate:(taskDates[t.id]&&taskDates[t.id]<TODAY_KEY?taskDates[t.id]:null);
-              return od&&!t.done?<span style={{marginLeft:6,fontSize:10,fontWeight:700,color:'#FF3B30',
-                background:'rgba(255,59,48,0.10)',borderRadius:4,padding:'1px 5px',whiteSpace:'nowrap'}}>
+              return od&&!t.done?<span style={{marginLeft:6,fontSize:10,fontWeight:700,color:'var(--sys-red)',
+                background:'var(--sys-red-soft)',borderRadius:4,padding:'1px 5px',whiteSpace:'nowrap'}}>
                 {Math.round((new Date(TODAY_KEY)-new Date(od))/86400000)}d tarde
               </span>:null;})()}
             {subs.length>0&&<span style={{marginLeft:6,fontSize:11,color:'var(--text-3)',fontWeight:500}}>{subsDone}/{subs.length}</span>}
@@ -2180,7 +2194,7 @@ function HoyTareas({tasks,setTasks,showCompleted=true,readOnly=false}){
             aria-label={s.done?'Marcar subtarea como pendiente':'Marcar subtarea como completada'}
             style={{width:18,height:18,borderRadius:9,flexShrink:0,cursor:'pointer',
             border:s.done?'none':`1.5px solid ${laneColor}55`,background:s.done?laneColor:'transparent',
-            display:'flex',alignItems:'center',justifyContent:'center',color:'#fff',padding:0}}>
+            display:'flex',alignItems:'center',justifyContent:'center',color:laneColor==='var(--accent)'?'var(--accent-ink)':'#fff',padding:0}}>
             {s.done&&<ICheck size={9}/>}
           </button>}
           <button type="button" onClick={readOnly?undefined:()=>toggleSub(laneId,t.id,s.id)}
@@ -2211,13 +2225,13 @@ function HoyTareas({tasks,setTasks,showCompleted=true,readOnly=false}){
         onKeyDown={e=>e.key==='Enter'&&addTask()} placeholder="Nueva tarea…"
         style={{flex:1,fontSize:14,color:'var(--text-1)',background:'transparent',border:'none',outline:'none'}}/>
       <button onClick={addTask} style={{padding:'5px 12px',borderRadius:8,background:'var(--accent)',
-        color:'#fff',fontSize:12,fontWeight:600,border:'none',cursor:'pointer'}}>Añadir</button>
+        color:'var(--accent-ink)',fontSize:12,fontWeight:600,border:'none',cursor:'pointer'}}>Añadir</button>
     </div>
     <div style={{display:'flex',gap:2,padding:'8px 10px'}}>
       {LANES.map(l=><button key={l.id} onClick={()=>chooseNewLane(l.id)} style={{flex:1,padding:'5px 8px',
         borderRadius:8,fontSize:12,border:'none',cursor:'pointer',
         background:newLane===l.id?'var(--accent)':'var(--fill-1)',
-        color:newLane===l.id?'#fff':'var(--text-3)',fontWeight:newLane===l.id?600:500}}>{l.label}</button>)}
+        color:newLane===l.id?'var(--accent-ink)':'var(--text-3)',fontWeight:newLane===l.id?600:500}}>{l.label}</button>)}
     </div>
   </Card>;
 
@@ -2902,7 +2916,7 @@ function _UnusedMensualScreen({dayTypes,setDayTypes}){
             <span style={{fontSize:11,fontWeight:600,color:DAY_TYPE_SURFACE.text}}>{cfg.label}</span>
           </div>)}
           <div style={{display:'flex',alignItems:'center',gap:5,padding:'4px 10px',borderRadius:999,
-            background:WEEKEND_CFG.soft,border:`0.5px solid ${WEEKEND_CFG.color}44`}}>
+            background:WEEKEND_CFG.soft,border:'0.5px solid var(--calendar-cell-border)'}}>
             <span style={{fontSize:11,fontWeight:600,color:WEEKEND_CFG.color}}>{WEEKEND_CFG.label}</span>
           </div>
           <div style={{display:'flex',alignItems:'center',gap:5,padding:'4px 10px',borderRadius:999,
@@ -2929,16 +2943,16 @@ function _UnusedMensualScreen({dayTypes,setDayTypes}){
                 const bg=sel?'var(--accent)':accentCfg?accentCfg.soft:c.score!==null?scoreHueSoft(c.score):'var(--fill-1)';
                 const border=sel?'1.5px solid var(--accent)':c.today?'1.5px solid var(--accent)'
                   :scoreCol?`1px solid ${scoreCol}`
-                  :`0.5px solid ${cfg?cfg.border:accentCfg?accentCfg.color+'44':'var(--separator)'}`;
+                  :`0.5px solid ${cfg?cfg.border:accentCfg?'var(--calendar-cell-border)':'var(--separator)'}`;
                 return<div key={i} onClick={()=>setSelDay(sel?null:c.d)}
                   style={{aspectRatio:'1',background:bg,border,borderRadius:9,
                     display:'flex',flexDirection:'column',justifyContent:'space-between',padding:isD?5:3,cursor:'pointer',minHeight:0}}>
                   <div style={{fontSize:isD?11:10.5,fontWeight:sel||c.today?700:600,
-                    color:sel?'#fff':c.today?'var(--accent)':cfg?DAY_TYPE_SURFACE.text:accentCfg?accentCfg.color:'var(--text-2)',letterSpacing:-0.1,lineHeight:1}}>{c.d}</div>
+                    color:sel?'var(--accent-ink)':c.today?'var(--accent)':cfg?DAY_TYPE_SURFACE.text:accentCfg?accentCfg.color:'var(--text-2)',letterSpacing:-0.1,lineHeight:1}}>{c.d}</div>
                   {cfg
                     ?<div style={{display:'flex',justifyContent:'flex-end',color:cfg.color,lineHeight:1}}><cfg.Icon size={isD?10:9} sw={1.8}/></div>
                     :wkOnly
-                      ?<div style={{fontSize:isD?9:8,fontWeight:600,color:sel?'rgba(255,255,255,0.85)':WEEKEND_CFG.color,textAlign:'right',letterSpacing:0.2,lineHeight:1}}>
+                      ?<div style={{fontSize:isD?9:8,fontWeight:600,color:sel?'var(--accent-ink)':WEEKEND_CFG.color,textAlign:'right',letterSpacing:0.2,lineHeight:1}}>
                           finde
                         </div>
                       :c.score!==null
@@ -3224,42 +3238,45 @@ function AgendaScreen({dayTypes,setDayTypes,calEvents,setCalEvents}){
 
   const px=isD?52:14;
 
-  const CalGrid=<Card radius={20} padding={isD?14:10}>
-    <div style={{display:'grid',gridTemplateColumns:'repeat(7,1fr)',gap:3,marginBottom:6}}>
-      {['L','M','X','J','V','S','D'].map(x=><div key={x} style={{textAlign:'center',fontSize:10.5,color:'var(--text-3)',fontWeight:600,letterSpacing:0.2}}>{x}</div>)}
+  const CalGrid=<Card radius={18} padding={isD?14:10} style={{background:'linear-gradient(180deg,var(--surface-1),var(--surface-ink))'}}>
+    <div style={{display:'grid',gridTemplateColumns:'repeat(7,1fr)',gap:isD?5:3,marginBottom:8}}>
+      {['L','M','X','J','V','S','D'].map(x=><div key={x} style={{textAlign:'center',fontSize:10.5,color:'var(--text-3)',fontWeight:700,letterSpacing:0.3}}>{x}</div>)}
     </div>
-    <div style={{display:'grid',gridTemplateColumns:'repeat(7,1fr)',gap:3}}>
+    <div style={{display:'grid',gridTemplateColumns:'repeat(7,1fr)',gap:isD?5:3}}>
       {days.map((c,i)=>{
         if(c.pad)return<div key={i} style={{aspectRatio:'1',opacity:0.3}}/>;
         const sel=c.d===selDay;
         const cfg=c.type?DAY_TYPE_CFG[c.type]:null;
         const wkOnly=!cfg&&c.weekend;
-        const accentCfg=cfg||(wkOnly?WEEKEND_CFG:null);
         const scoreCol=c.score!==null?scoreHue(c.score):null;
-        const bg=sel?'var(--accent)':accentCfg?accentCfg.soft:c.score!==null?scoreHueSoft(c.score):c.today?'var(--fill-2)':'var(--fill-1)';
-        const border=sel?'1.5px solid var(--accent)':c.today?'1.5px solid var(--accent)'
-          :scoreCol?`1px solid ${scoreCol}`
-          :`0.5px solid ${cfg?cfg.border:accentCfg?accentCfg.color+'44':'var(--separator)'}`;
+        const cellBg=sel?'var(--accent)':c.today?'var(--fill-2)':cfg?cfg.soft:'var(--calendar-cell-bg)';
+        const cellBorder=sel?'1.5px solid var(--accent)':c.today?'1.5px solid var(--accent)'
+          :cfg?`1px solid ${cfg.border}`:'1px solid var(--calendar-cell-border)';
+        const accentLine=sel?'transparent':cfg?cfg.color:scoreCol||'transparent';
         return<div key={i} onClick={()=>setSelDay(c.d)}
-          style={{aspectRatio:'1',background:bg,border,borderRadius:9,
-            display:'flex',flexDirection:'column',justifyContent:'space-between',padding:isD?5:3,cursor:'pointer',minHeight:0}}>
+          style={{aspectRatio:'1',background:cellBg,border:cellBorder,borderRadius:10,
+            display:'flex',flexDirection:'column',justifyContent:'space-between',padding:isD?7:4,cursor:'pointer',minHeight:0,
+            boxShadow:accentLine!=='transparent'?`inset 0 -3px 0 ${accentLine}`:'none'}}>
           <div style={{display:'flex',justifyContent:'space-between',alignItems:'flex-start',gap:2}}>
             <div style={{fontSize:isD?12:10.5,fontWeight:sel||c.today?700:600,
-              color:sel?'#fff':c.today?'var(--accent)':cfg?DAY_TYPE_SURFACE.text:accentCfg?accentCfg.color:'var(--text-1)',letterSpacing:-0.1,lineHeight:1}}>{c.d}</div>
-            {cfg&&<span style={{display:'flex',color:cfg.color,lineHeight:1}}><cfg.Icon size={isD?10:9} sw={1.8}/></span>}
+              color:sel?'var(--accent-ink)':c.today?'var(--accent)':'var(--text-1)',letterSpacing:-0.1,lineHeight:1}}>{c.d}</div>
+            {cfg&&<span style={{display:'flex',color:cfg.color,lineHeight:1,background:'var(--fill-1)',borderRadius:999,padding:2}}>
+              <cfg.Icon size={isD?10:9} sw={1.8}/>
+            </span>}
           </div>
           <div style={{display:'flex',justifyContent:'space-between',alignItems:'flex-end',gap:2}}>
             {c.cnt>0
               ?<div style={{display:'flex',gap:2}}>
                 {Array.from({length:Math.min(c.cnt,3)}).map((_,j)=><div key={j} style={{
-                  width:3,height:3,borderRadius:2,background:sel?'rgba(255,255,255,0.85)':'var(--accent)'}}/>)}
+                  width:3,height:3,borderRadius:2,background:sel?'var(--accent-ink)':'var(--accent)',opacity:sel?0.75:1}}/>)}
               </div>
               :<span/>}
             {wkOnly
-              ?<div style={{fontSize:isD?9:8,fontWeight:600,color:sel?'rgba(255,255,255,0.85)':WEEKEND_CFG.color,letterSpacing:0.2,lineHeight:1}}>finde</div>
+              ?<div style={{fontSize:isD?9:8,fontWeight:600,color:sel?'var(--accent-ink)':WEEKEND_CFG.color,letterSpacing:0.2,lineHeight:1}}>finde</div>
               :c.score!==null
                 ?<div style={{fontSize:isD?10:9,fontFamily:'ui-rounded,-apple-system,system-ui',
-                    fontWeight:700,color:sel?'rgba(255,255,255,0.85)':scoreCol,letterSpacing:-0.3,lineHeight:1}}>
+                    fontWeight:700,color:sel?'var(--accent-ink)':scoreCol,background:sel?'rgba(33,22,14,0.12)':scoreHueSoft(c.score),
+                    padding:'2px 5px',borderRadius:999,letterSpacing:-0.3,lineHeight:1}}>
                     {c.score.toFixed(1)}
                   </div>
                 :<span/>}
@@ -3270,43 +3287,45 @@ function AgendaScreen({dayTypes,setDayTypes,calEvents,setCalEvents}){
   </Card>;
 
   const EventPanel=<div style={{display:'flex',flexDirection:'column',gap:10}}>
-    <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',padding:'0 2px'}}>
-      <div>
-        <div style={{fontSize:15,fontWeight:600,color:'var(--text-1)',letterSpacing:-0.2}}>{selLabel}</div>
-        <div style={{fontSize:12,color:'var(--text-3)',marginTop:2}}>{dayEvs.length} evento{dayEvs.length!==1?'s':''} · {allDayTasks.length} tarea{allDayTasks.length!==1?'s':''}</div>
+    <Card radius={18} padding={14} style={{background:'linear-gradient(180deg,var(--surface-1),var(--surface-ink))'}}>
+      <div style={{display:'flex',justifyContent:'space-between',alignItems:'flex-start',gap:12}}>
+        <div style={{minWidth:0}}>
+          <div style={{fontSize:16,fontWeight:700,color:'var(--text-1)',letterSpacing:-0.25}}>{selLabel}</div>
+          <div style={{fontSize:12,color:'var(--text-3)',marginTop:3}}>{dayEvs.length} evento{dayEvs.length!==1?'s':''} · {allDayTasks.length} tarea{allDayTasks.length!==1?'s':''}</div>
+        </div>
+        <div style={{display:'flex',alignItems:'center',gap:6,flexShrink:0}}>
+          <button onClick={()=>{setAddingTask(false);setAdding(v=>!v);}} style={{display:'flex',alignItems:'center',gap:6,
+            padding:'8px 12px',borderRadius:12,background:'var(--accent)',color:'var(--accent-ink)',
+            fontSize:12.5,fontWeight:700}}>
+            <IPlus size={14}/> Evento
+          </button>
+          <button onClick={()=>{setAdding(false);closeEditor();setAddingTask(v=>!v);}} style={{display:'flex',alignItems:'center',gap:6,
+            padding:'8px 12px',borderRadius:12,background:'var(--fill-1)',color:'var(--text-2)',
+            fontSize:12.5,fontWeight:700}}>
+            <IPlus size={14}/> Tarea
+          </button>
+        </div>
       </div>
-      <div style={{display:'flex',alignItems:'center',gap:8}}>
-        <button onClick={()=>{setAddingTask(false);setAdding(v=>!v);}} style={{display:'flex',alignItems:'center',gap:6,
-          padding:'7px 14px',borderRadius:14,background:'var(--accent)',color:'#fff',
-          fontSize:13,fontWeight:600}}>
-          <IPlus size={14}/> Evento
-        </button>
-        <button onClick={()=>{setAdding(false);closeEditor();setAddingTask(v=>!v);}} style={{display:'flex',alignItems:'center',gap:6,
-          padding:'7px 14px',borderRadius:14,background:'var(--fill-1)',color:'var(--text-2)',
-          fontSize:13,fontWeight:600}}>
-          <IPlus size={14}/> Tarea
-        </button>
+      <div style={{display:'flex',alignItems:'center',gap:8,flexWrap:'wrap',marginTop:12,paddingTop:12,borderTop:'1px solid var(--separator)'}}>
+        <Chip tint={pushSubscribed?'var(--sys-green)':notifPermission==='denied'?'var(--sys-red)':'var(--sys-amber)'}>
+          {pushSubscribed?'Dispositivo suscrito':notifPermission==='denied'?'Avisos bloqueados':'Dispositivo no suscrito'}
+        </Chip>
+        {pushSupported()&&!pushSubscribed&&notifPermission!=='unsupported'&&<button onClick={enableNotifications} disabled={pushBusy}
+          style={{padding:'6px 12px',borderRadius:999,background:'var(--fill-1)',fontSize:12,fontWeight:700,color:'var(--text-2)'}}>
+          {pushBusy?'Activando…':'Activar notificaciones'}
+        </button>}
+        {pushSupported()&&pushSubscribed&&<button onClick={enableNotifications} disabled={pushBusy}
+          style={{padding:'6px 12px',borderRadius:999,background:'var(--sys-green-soft)',fontSize:12,fontWeight:700,color:'var(--sys-green)'}}>
+          {pushBusy?'Reactivando…':'Reactivar'}
+        </button>}
+        {pushSupported()&&pushSubscribed&&<button onClick={disableNotifications} disabled={pushBusy}
+          style={{padding:'6px 12px',borderRadius:999,background:'var(--fill-1)',fontSize:12,fontWeight:700,color:'var(--text-2)'}}>
+          {pushBusy?'Quitando…':'Desactivar en este dispositivo'}
+        </button>}
+        {notifPermission==='unsupported'&&<span style={{fontSize:11,color:'var(--text-3)'}}>Este navegador no soporta avisos locales.</span>}
+        {pushMsg&&<span style={{fontSize:11,color:pushSubscribed?'var(--sys-green)':'var(--text-3)'}}>{pushMsg}</span>}
       </div>
-    </div>
-    <div style={{display:'flex',alignItems:'center',gap:8,flexWrap:'wrap',padding:'0 2px'}}>
-      <Chip tint={pushSubscribed?'var(--sys-green)':notifPermission==='denied'?'var(--sys-red)':'var(--sys-amber)'}>
-        {pushSubscribed?'Dispositivo suscrito':notifPermission==='denied'?'Avisos bloqueados':'Dispositivo no suscrito'}
-      </Chip>
-      {pushSupported()&&!pushSubscribed&&notifPermission!=='unsupported'&&<button onClick={enableNotifications} disabled={pushBusy}
-        style={{padding:'6px 12px',borderRadius:999,background:'var(--fill-1)',fontSize:12,fontWeight:600,color:'var(--text-2)'}}>
-        {pushBusy?'Activando…':'Activar notificaciones'}
-      </button>}
-      {pushSupported()&&pushSubscribed&&<button onClick={enableNotifications} disabled={pushBusy}
-        style={{padding:'6px 12px',borderRadius:999,background:'var(--sys-green-soft)',fontSize:12,fontWeight:600,color:'var(--sys-green)'}}>
-        {pushBusy?'Reactivando…':'Reactivar'}
-      </button>}
-      {pushSupported()&&pushSubscribed&&<button onClick={disableNotifications} disabled={pushBusy}
-        style={{padding:'6px 12px',borderRadius:999,background:'var(--fill-1)',fontSize:12,fontWeight:600,color:'var(--text-2)'}}>
-        {pushBusy?'Quitando…':'Desactivar en este dispositivo'}
-      </button>}
-      {notifPermission==='unsupported'&&<span style={{fontSize:11,color:'var(--text-3)'}}>Este navegador no soporta avisos locales.</span>}
-      {pushMsg&&<span style={{fontSize:11,color:pushSubscribed?'var(--sys-green)':'var(--text-3)'}}>{pushMsg}</span>}
-    </div>
+    </Card>
 
     {adding&&<Card radius={16} padding={14}>
       <div style={{display:isD?'flex':'grid',gridTemplateColumns:isD?undefined:'100px 1fr',gap:8,marginBottom:10}}>
@@ -3359,7 +3378,7 @@ function AgendaScreen({dayTypes,setDayTypes,calEvents,setCalEvents}){
         <button onClick={()=>{resetAddForm();setAdding(false);}} style={{padding:'7px 14px',borderRadius:10,
           background:'var(--fill-1)',fontSize:13,color:'var(--text-3)',fontWeight:500}}>Cancelar</button>
         <button onClick={addEvent} style={{padding:'7px 14px',borderRadius:10,
-          background:'var(--accent)',color:'#fff',fontSize:13,fontWeight:600}}>Guardar</button>
+          background:'var(--accent)',color:'var(--accent-ink)',fontSize:13,fontWeight:600}}>Guardar</button>
       </div>
     </Card>}
 
@@ -3377,7 +3396,7 @@ function AgendaScreen({dayTypes,setDayTypes,calEvents,setCalEvents}){
           <option value="enfoque">En Foco</option>
           <option value="parking">Parking</option>
         </select>
-        <button onClick={addAgendaTask} style={{padding:'9px 14px',borderRadius:10,background:'var(--accent)',color:'#fff',
+        <button onClick={addAgendaTask} style={{padding:'9px 14px',borderRadius:10,background:'var(--accent)',color:'var(--accent-ink)',
           fontSize:13,fontWeight:600,whiteSpace:'nowrap'}}>Guardar tarea</button>
       </div>
       <div style={{fontSize:11,color:'var(--text-3)'}}>
@@ -3385,17 +3404,17 @@ function AgendaScreen({dayTypes,setDayTypes,calEvents,setCalEvents}){
       </div>
     </Card>}
 
-    <Card radius={16} padding={14}>
+    <Card radius={18} padding={14} style={{background:'linear-gradient(180deg,var(--surface-1),var(--surface-ink))'}}>
       <div style={{fontSize:11,fontWeight:600,color:'var(--text-3)',letterSpacing:0.6,textTransform:'uppercase',marginBottom:10}}>Tipo de día</div>
       <div style={{display:'grid',gridTemplateColumns:isD?'repeat(2,1fr)':'1fr',gap:6}}>
         {Object.entries(DAY_TYPE_CFG).map(([id,cfg])=><button key={id}
           onClick={()=>setType(selKey,selType===id?null:id)}
           style={{display:'flex',alignItems:'center',gap:10,padding:'9px 12px',borderRadius:10,
-            background:selType===id?cfg.soft:'var(--fill-1)',
-            border:`0.5px solid ${selType===id?cfg.border:'transparent'}`,
+            background:'var(--fill-1)',
+            border:`1px solid ${selType===id?cfg.border:'transparent'}`,
             textAlign:'left',cursor:'pointer'}}>
           <span style={{display:'flex',color:cfg.color}}><cfg.Icon size={14} sw={1.8}/></span>
-          <div style={{flex:1,fontSize:13,fontWeight:600,color:selType===id?DAY_TYPE_SURFACE.text:'var(--text-1)',letterSpacing:-0.1}}>
+          <div style={{flex:1,fontSize:13,fontWeight:700,color:'var(--text-1)',letterSpacing:-0.1}}>
             {cfg.label}
           </div>
           {selType===id&&<ICheck size={13} style={{color:cfg.color}}/>}
@@ -3460,7 +3479,7 @@ function AgendaScreen({dayTypes,setDayTypes,calEvents,setCalEvents}){
         <button onClick={closeEditor} style={{padding:'7px 14px',borderRadius:10,
           background:'var(--fill-1)',fontSize:13,color:'var(--text-3)',fontWeight:500}}>Cancelar</button>
         <button onClick={saveEditEvent} style={{padding:'7px 14px',borderRadius:10,
-          background:'var(--accent)',color:'#fff',fontSize:13,fontWeight:600}}>Guardar cambios</button>
+          background:'var(--accent)',color:'var(--accent-ink)',fontSize:13,fontWeight:600}}>Guardar cambios</button>
       </div>
     </Card>}
 
@@ -3531,22 +3550,34 @@ function AgendaScreen({dayTypes,setDayTypes,calEvents,setCalEvents}){
     </Card>
   </div>;
 
+  const AgendaMetric=({label,value,unit,color,sub})=><div style={{
+    padding:isD?'14px 16px':'12px 14px',borderRadius:16,
+    background:'linear-gradient(180deg,var(--surface-1),var(--surface-ink))',
+    border:'1px solid var(--calendar-cell-border)',minHeight:isD?92:78}}>
+    <div style={{fontSize:11,fontWeight:700,color:'var(--text-3)',letterSpacing:0.8,textTransform:'uppercase',marginBottom:8}}>{label}</div>
+    <div style={{display:'flex',alignItems:'baseline',gap:4}}>
+      <span style={{fontFamily:'ui-rounded,-apple-system,system-ui',fontSize:isD?31:25,fontWeight:750,color,letterSpacing:-0.8,lineHeight:1}}>{value}</span>
+      {unit&&<span style={{fontSize:isD?14:12,color:'var(--text-3)',fontWeight:600}}>{unit}</span>}
+    </div>
+    {sub&&<div style={{fontSize:12,color:'var(--text-3)',marginTop:5}}>{sub}</div>}
+  </div>;
+
   const MetricsRow=<div style={{display:'grid',gridTemplateColumns:isD?'repeat(4,1fr)':'1fr 1fr',gap:isD?10:8}}>
-    <MetricTile label="Media" value={avg} unit={avg!=='—'?'/10':''} color={avg!=='—'?scoreHue(+avg):'var(--text-3)'} sub="días evaluados"/>
-    <MetricTile label="Mejor día" value={best} color={best!=='—'?scoreHue(+best):'var(--text-3)'}/>
-    <MetricTile label="Días eval." value={evalCount} unit={`/${daysInMonth}`} color="var(--accent)"/>
-    <MetricTile label="Excluidos" value={specialCount} unit={`/${daysInMonth}`} color="var(--text-3)" sub="fest/vac/mant/finde"/>
+    <AgendaMetric label="Media" value={avg} unit={avg!=='—'?'/10':''} color={avg!=='—'?scoreHue(+avg):'var(--text-3)'} sub="días evaluados"/>
+    <AgendaMetric label="Mejor día" value={best} color={best!=='—'?scoreHue(+best):'var(--text-3)'} sub="mejor puntuación"/>
+    <AgendaMetric label="Días eval." value={evalCount} unit={`/${daysInMonth}`} color="var(--accent)" sub="con datos"/>
+    <AgendaMetric label="Excluidos" value={specialCount} unit={`/${daysInMonth}`} color="var(--text-2)" sub="fest/vac/mant/finde"/>
   </div>;
 
   const Legend=<div style={{display:'flex',gap:6,flexWrap:'wrap'}}>
     {Object.entries(DAY_TYPE_CFG).map(([id,cfg])=><div key={id} style={{display:'flex',alignItems:'center',gap:5,
-      padding:'4px 9px',borderRadius:999,background:cfg.soft,border:`0.5px solid ${cfg.border}`}}>
+      padding:'4px 9px',borderRadius:999,background:'var(--calendar-cell-bg)',border:`1px solid ${cfg.border}`}}>
       <span style={{display:'flex',color:cfg.color}}><cfg.Icon size={11} sw={1.8}/></span>
-      <span style={{fontSize:10.5,fontWeight:600,color:DAY_TYPE_SURFACE.text}}>{cfg.label}</span>
+      <span style={{fontSize:10.5,fontWeight:700,color:'var(--text-2)'}}>{cfg.label}</span>
     </div>)}
     <div style={{display:'flex',alignItems:'center',gap:5,padding:'4px 9px',borderRadius:999,
-      background:WEEKEND_CFG.soft,border:`0.5px solid ${WEEKEND_CFG.color}44`}}>
-      <span style={{fontSize:10.5,fontWeight:600,color:WEEKEND_CFG.color}}>{WEEKEND_CFG.label}</span>
+      background:'var(--calendar-cell-bg)',border:'1px solid var(--calendar-cell-border)'}}>
+      <span style={{fontSize:10.5,fontWeight:700,color:WEEKEND_CFG.color}}>{WEEKEND_CFG.label}</span>
     </div>
   </div>;
 
@@ -3594,6 +3625,17 @@ function stripHtml(html){
   d.innerHTML=html||'';
   return d.textContent||'';
 }
+function cleanNotebookHtml(html){
+  if(typeof document==='undefined')return String(html||'');
+  const d=document.createElement('div');
+  d.innerHTML=html||'';
+  d.querySelectorAll('[style]').forEach(el=>{
+    el.style.removeProperty('color');
+    el.style.removeProperty('-webkit-text-fill-color');
+    if(!el.getAttribute('style'))el.removeAttribute('style');
+  });
+  return d.innerHTML;
+}
 function makeNotebookPage(n){
   const now=new Date().toISOString();
   return{id:'p'+Date.now()+Math.floor(Math.random()*1000),title:`Página ${n}`,html:'',text:'',createdAt:now,updatedAt:now};
@@ -3629,7 +3671,10 @@ function BlocNotasScreen({notebook,setNotebook,agendaNotes}){
   },[]);
 
   useEffect(()=>{
-    if(editorRef.current&&current&&editorRef.current.innerHTML!==current.html)editorRef.current.innerHTML=current.html||'';
+    if(editorRef.current&&current){
+      const html=cleanNotebookHtml(current.html||'');
+      if(editorRef.current.innerHTML!==html)editorRef.current.innerHTML=html;
+    }
   },[current?.id]);
 
   function patchNotebook(updater){
@@ -3653,7 +3698,7 @@ function BlocNotasScreen({notebook,setNotebook,agendaNotes}){
   }
   function saveEditor(){
     if(!current||!editorRef.current)return;
-    const html=editorRef.current.innerHTML;
+    const html=cleanNotebookHtml(editorRef.current.innerHTML);
     const text=stripHtml(html);
     patchNotebook(n=>({...n,pages:n.pages.map(p=>p.id===current.id?{...p,html,text,updatedAt:new Date().toISOString()}:p)}));
   }
@@ -3710,7 +3755,7 @@ function BlocNotasScreen({notebook,setNotebook,agendaNotes}){
               <button onClick={clearHighlight} style={{padding:'6px 10px',borderRadius:999,background:'var(--fill-1)',
                 color:'var(--text-2)',fontSize:12,fontWeight:600}}>Quitar</button>
             </div>
-            <div ref={editorRef} contentEditable suppressContentEditableWarning onInput={saveEditor}
+            <div ref={editorRef} className="zp-notebook-editor" contentEditable suppressContentEditableWarning onInput={saveEditor}
               data-placeholder="Escribe aquí como en un libro..."
               style={{width:'100%',minHeight:isD?'calc(100vh - 315px)':390,fontFamily:'ui-rounded,-apple-system,system-ui',
                 fontSize:isD?17:16,lineHeight:1.75,color:'var(--text-1)',background:'repeating-linear-gradient(to bottom,var(--surface-1) 0,var(--surface-1) 31px,var(--separator) 32px)',
@@ -3813,7 +3858,7 @@ function DoceScreen(){
             <button onClick={startCycle} disabled={!focus.trim()||!startDate}
               style={{padding:'12px',borderRadius:12,fontSize:14,fontWeight:600,
                 background:focus.trim()&&startDate?'var(--accent)':'var(--fill-1)',
-                color:focus.trim()&&startDate?'#fff':'var(--text-3)',border:'none',
+                color:focus.trim()&&startDate?'var(--accent-ink)':'var(--text-3)',border:'none',
                 cursor:focus.trim()&&startDate?'pointer':'default'}}>
               Iniciar ciclo
             </button>
@@ -3942,7 +3987,7 @@ function BovedaScreen({passwords,setPasswords,expenseCats,setExpenseCats,expense
         {SUBTABS.map(t=><button key={t.id} onClick={()=>setTab(t.id)} style={{
           padding:'5px 12px',borderRadius:999,flexShrink:0,
           background:tab===t.id?'var(--accent)':'var(--fill-1)',
-          color:tab===t.id?'#fff':'var(--text-2)',
+          color:tab===t.id?'var(--accent-ink)':'var(--text-2)',
           fontSize:12.5,fontWeight:tab===t.id?600:500,letterSpacing:-0.1,border:'none',cursor:'pointer'}}>
           {t.label}
         </button>)}
@@ -4119,7 +4164,7 @@ function BovedaGastos({cats,setCats,recurring,setRecurring}){
           <button onClick={addExpense} disabled={!draft.name.trim()||!Number(draft.amount)} style={{
             padding:'8px 14px',borderRadius:10,
             background:draft.name.trim()&&Number(draft.amount)?'var(--accent)':'var(--fill-1)',
-            color:draft.name.trim()&&Number(draft.amount)?'#fff':'var(--text-3)',
+            color:draft.name.trim()&&Number(draft.amount)?'var(--accent-ink)':'var(--text-3)',
             border:'none',cursor:draft.name.trim()&&Number(draft.amount)?'pointer':'default',fontSize:13,fontWeight:600}}>
             Añadir
           </button>
@@ -4213,7 +4258,7 @@ function BovedaGastos({cats,setCats,recurring,setRecurring}){
           <button onClick={addCat} disabled={!newCat.name.trim()} style={{
             padding:'8px 14px',borderRadius:10,
             background:newCat.name.trim()?'var(--accent)':'var(--fill-1)',
-            color:newCat.name.trim()?'#fff':'var(--text-3)',
+            color:newCat.name.trim()?'var(--accent-ink)':'var(--text-3)',
             border:'none',cursor:newCat.name.trim()?'pointer':'default',fontSize:13,fontWeight:600}}>
             Añadir
           </button>
@@ -4334,7 +4379,7 @@ function BovedaPasswords({passwords,setPasswords}){
           <button onClick={addGroup} disabled={!newGroupTitle.trim()} style={{
             padding:'8px 14px',borderRadius:10,
             background:newGroupTitle.trim()?'var(--accent)':'var(--fill-1)',
-            color:newGroupTitle.trim()?'#fff':'var(--text-3)',
+            color:newGroupTitle.trim()?'var(--accent-ink)':'var(--text-3)',
             border:'none',cursor:newGroupTitle.trim()?'pointer':'default',fontSize:13,fontWeight:600}}>
             Crear
           </button>
@@ -4445,7 +4490,7 @@ function BovedaPasswords({passwords,setPasswords}){
               <button onClick={()=>addAccount(g.id)} disabled={!accDraft.label.trim()&&!accDraft.user.trim()} style={{
                 padding:'8px 14px',borderRadius:10,
                 background:(accDraft.label.trim()||accDraft.user.trim())?'var(--accent)':'var(--surface-1)',
-                color:(accDraft.label.trim()||accDraft.user.trim())?'#fff':'var(--text-3)',
+                color:(accDraft.label.trim()||accDraft.user.trim())?'var(--accent-ink)':'var(--text-3)',
                 border:'none',cursor:(accDraft.label.trim()||accDraft.user.trim())?'pointer':'default',fontSize:13,fontWeight:600}}>
                 Añadir cuenta
               </button>
@@ -4489,7 +4534,7 @@ function IdeasScreen({ideas,setIdeas,library,setLibrary}){
       {id:'contenido',label:'Contenido'},
     ].map(s=><button key={s.id} onClick={()=>setSection(s.id)}
       style={{padding:isD?'7px 12px':'6px 10px',borderRadius:999,background:section===s.id?'var(--accent)':'transparent',
-        color:section===s.id?'#fff':'var(--text-2)',fontSize:isD?13:12,fontWeight:700}}>
+        color:section===s.id?'var(--accent-ink)':'var(--text-2)',fontSize:isD?13:12,fontWeight:700}}>
       {s.label}
     </button>)}
   </div>;
@@ -4509,7 +4554,7 @@ function IdeasScreen({ideas,setIdeas,library,setLibrary}){
       <button onClick={()=>setAdding(false)} style={{padding:'7px 14px',borderRadius:10,
         background:'var(--fill-1)',fontSize:13,color:'var(--text-3)',fontWeight:500}}>Cancelar</button>
       <button onClick={addIdea} style={{padding:'7px 14px',borderRadius:10,
-        background:'var(--accent)',color:'#fff',fontSize:13,fontWeight:600}}>Guardar</button>
+        background:'var(--accent)',color:'var(--accent-ink)',fontSize:13,fontWeight:600}}>Guardar</button>
     </div>
   </Card>:
   <button onClick={()=>setAdding(true)} style={{display:'flex',alignItems:'center',gap:10,
@@ -4638,6 +4683,7 @@ function contentUrlInfo(url){
     const format=path.startsWith('/reel/')?'Reel':path.startsWith('/p/')?'Publicación':path.startsWith('/stories/')?'Historia':'Instagram';
     return{...base,platform:'Instagram',format,type:'video'};
   }
+  if(/(^|\.)reddit\.com$|redd\.it$/.test(host))return{...base,platform:'Reddit',format:'Post',type:'articulo'};
   if(/vimeo\.com/.test(host))return{...base,platform:'Vimeo',format:'Vídeo',type:'video'};
   if(/spotify|podcasts|ivoox|apple/.test(host))return{...base,platform:host.includes('spotify')?'Spotify':host,format:'Podcast',type:'podcast'};
   if(/udemy|coursera|domestika|skillshare/.test(host))return{...base,platform:host,format:'Curso',type:'curso'};
@@ -4646,17 +4692,36 @@ function contentUrlInfo(url){
 function inferContentType(url){
   const h=contentHost(url);
   if(/youtube|youtu\.be|tiktok|vimeo|instagram/.test(h))return'video';
+  if(/reddit|redd\.it/.test(h))return'articulo';
   if(/spotify|podcasts|ivoox|apple/.test(h))return'podcast';
   if(/udemy|coursera|domestika|skillshare/.test(h))return'curso';
   return'articulo';
 }
+function humanTitlePart(part){
+  const clean=decodeURIComponent(String(part||'')).replace(/[-_]+/g,' ').replace(/\s+/g,' ').trim();
+  if(!clean||/^[a-z0-9]{4,10}$/i.test(clean))return'';
+  return clean.charAt(0).toUpperCase()+clean.slice(1);
+}
+function redditTitleFromUrl(url){
+  try{
+    const u=new URL(normalizeUrl(url));
+    const host=u.hostname.replace(/^www\./,'').toLowerCase();
+    if(!/(^|\.)reddit\.com$|redd\.it$/.test(host))return'';
+    const parts=u.pathname.split('/').filter(Boolean);
+    const commentsIdx=parts.findIndex(p=>p.toLowerCase()==='comments');
+    if(commentsIdx>=0)return humanTitlePart(parts[commentsIdx+2]||'');
+    return humanTitlePart(parts[parts.length-1]||'');
+  }catch{}
+  return'';
+}
 function readableTitleFromUrl(url,info=contentUrlInfo(url)){
+  const redditTitle=redditTitleFromUrl(url);
+  if(redditTitle)return redditTitle;
   try{
     const u=new URL(normalizeUrl(url));
     const parts=u.pathname.split('/').filter(Boolean);
-    const last=decodeURIComponent(parts[parts.length-1]||parts[0]||'').replace(/[-_]+/g,' ').trim();
-    const title=last&&!/^[a-z0-9_-]{6,}$/i.test(last)?last.replace(/\s+/g,' '):'';
-    if(title)return title.charAt(0).toUpperCase()+title.slice(1);
+    const title=humanTitlePart(parts[parts.length-1]||parts[0]||'');
+    if(title)return title;
   }catch{}
   return `${info.format} de ${info.platform}`;
 }
@@ -4712,6 +4777,24 @@ function looksEnglish(text){
   const hasEnglishContraction=/\b(can't|won't|don't|doesn't|i'm|you're|it's|that's)\b/i.test(String(text||''));
   return hits>=2||hasEnglishContraction||(hits>=1&&commonVerb);
 }
+function looksSpanish(text){
+  const raw=String(text||'');
+  if(/[áéíóúüñ¿¡]/i.test(raw))return true;
+  const t=` ${normalizeForTopic(raw)} `;
+  if(/\b(post|enlace|articulo|artículo|video|vídeo|podcast|curso|otro)\s+sobre\b/i.test(raw))return true;
+  const hits=[
+    ' el ',' la ',' los ',' las ',' que ',' del ',' con ',' para ',' por ',' como ',' sobre ',
+    ' una ',' un ',' todo ',' todos ',' necesitas ',' saber ',' libro ',' carrera ',' ingeniero ',
+    ' datos ',' minutos ',' inteligencia ',' artificial ',' crear ',' sistema ',' aprender ',' idiomas ',
+    ' estrategia ',' cuantitativo ',' reglas ',' mental ',' cuenta ',' cuentas ',' calendario '
+  ].filter(w=>t.includes(w)).length;
+  return hits>=2;
+}
+function shouldTranslateToSpanish(text){
+  const clean=polishSpanishText(text);
+  if(!clean)return false;
+  return looksEnglish(clean)||!looksSpanish(clean);
+}
 function spanishGenericTitle(url,info=contentUrlInfo(url),topic=inferContentTopic(url,info)){
   return `${info.format} sobre ${topic}`;
 }
@@ -4721,21 +4804,21 @@ function polishSpanishText(text){
 function localSpanishFallback(text,url,info=contentUrlInfo(url),topic=inferContentTopic(`${url} ${text}`,info)){
   const clean=polishSpanishText(text);
   if(!clean)return spanishGenericTitle(url,info,topic);
-  if(!looksEnglish(clean))return clean;
+  if(!shouldTranslateToSpanish(clean))return clean;
   return spanishGenericTitle(url,info,topic);
 }
 async function translateToSpanish(text,url,info=contentUrlInfo(url),topic=inferContentTopic(`${url} ${text}`,info)){
   const clean=polishSpanishText(text);
   if(!clean)return spanishGenericTitle(url,info,topic);
-  if(!looksEnglish(clean))return clean;
+  if(!shouldTranslateToSpanish(clean))return clean;
   try{
     const res=await fetch(`https://api.mymemory.translated.net/get?q=${encodeURIComponent(clean.slice(0,450))}&langpair=en|es`);
     if(!res.ok)throw new Error('translate failed');
     const data=await res.json();
     const translated=polishSpanishText(data?.responseData?.translatedText||'');
-    if(translated&&!looksEnglish(translated))return translated;
+    if(translated&&translated.toLowerCase()!==clean.toLowerCase()&&!shouldTranslateToSpanish(translated))return translated;
   }catch{}
-  return localSpanishFallback(clean,url,info,topic);
+  return spanishGenericTitle(url,info,topic);
 }
 async function spanishTitleForContent(text,url,info=contentUrlInfo(url),topic=inferContentTopic(`${url} ${text}`,info)){
   return translateToSpanish(text,url,info,topic);
@@ -4747,6 +4830,7 @@ async function fetchContentMetadata(url){
   if(info.platform==='YouTube')endpoints.push(`https://www.youtube.com/oembed?format=json&url=${encodeURIComponent(clean)}`);
   if(info.platform==='Vimeo')endpoints.push(`https://vimeo.com/api/oembed.json?url=${encodeURIComponent(clean)}`);
   if(info.platform==='TikTok')endpoints.push(`https://www.tiktok.com/oembed?url=${encodeURIComponent(clean)}`);
+  if(info.platform==='Reddit')endpoints.push(`https://www.reddit.com/oembed?url=${encodeURIComponent(clean)}`);
   for(const endpoint of endpoints){
     try{
       const res=await fetch(endpoint);
@@ -4766,9 +4850,11 @@ async function fetchContentMetadata(url){
       };
     }catch{}
   }
-  const topic=inferContentTopic(`${clean} ${readableTitleFromUrl(clean,info)}`,info);
+  const fallbackTitle=readableTitleFromUrl(clean,info);
+  const topic=inferContentTopic(`${clean} ${fallbackTitle}`,info);
+  const fallbackTitleEs=await translateToSpanish(fallbackTitle,clean,info,topic);
   return{
-    title:localSpanishFallback(readableTitleFromUrl(clean,info),clean,info,topic),
+    title:fallbackTitleEs,
     description:`${fallbackContentDescription(clean,info)} Categoría: ${topic}.`,
     topic,
     thumbnail:'',
@@ -4780,6 +4866,14 @@ function normalizeUrl(url){
   if(/^https?:\/\//i.test(v))return v;
   return`https://${v}`;
 }
+function isGenericContentTitle(item,info=contentUrlInfo(item?.url||'')){
+  const title=polishSpanishText(item?.title||'');
+  const host=contentHost(item?.url||'');
+  if(!title)return true;
+  if(title===`${info.format} de ${info.platform}`)return true;
+  if(host&&title.toLowerCase()===`enlace de ${host}`.toLowerCase())return true;
+  return info.platform==='Reddit'&&/^enlace de reddit\.com$/i.test(title);
+}
 function ContentScreen({library,setLibrary,embedded=false}){
   const isD=useD();
   const[adding,setAdding]=useState(false);
@@ -4790,6 +4884,7 @@ function ContentScreen({library,setLibrary,embedded=false}){
   const[note,setNote]=useState('');
   const[type,setType]=useState('video');
   const[tags,setTags]=useState('');
+  const[editingItem,setEditingItem]=useState(null);
   const[metaLoading,setMetaLoading]=useState(false);
   const[metaError,setMetaError]=useState('');
   const px=isD?52:14;
@@ -4833,7 +4928,7 @@ function ContentScreen({library,setLibrary,embedded=false}){
   },[url]);
   useEffect(()=>{
     const candidates=(library||[]).filter(item=>
-      item&&item.url&&item.title&&!item.titleAutoEs&&looksEnglish(item.title)
+      item&&item.url&&item.title&&shouldTranslateToSpanish(item.title)
     ).slice(0,5);
     if(candidates.length===0)return;
     let cancelled=false;
@@ -4845,11 +4940,47 @@ function ContentScreen({library,setLibrary,embedded=false}){
         const topic=item.topic||inferContentTopic(`${clean} ${item.title} ${item.note||''}`,info);
         const translated=await spanishTitleForContent(item.title,clean,info,topic);
         if(cancelled)return;
+        if(!translated||translated===polishSpanishText(item.title||''))continue;
         updates[item.id]={
           title:translated,
           titleAutoEs:true,
           topic,
           tags:Array.from(new Set([info.platform,info.format,topic,...(Array.isArray(item.tags)?item.tags:[])]
+            .map(t=>String(t||'').trim()).filter(Boolean))),
+        };
+      }
+      if(cancelled||Object.keys(updates).length===0)return;
+      setLibrary(prev=>(prev||[]).map(item=>updates[item.id]?{...item,...updates[item.id],updatedAt:Date.now()}:item));
+    })();
+    return()=>{cancelled=true;};
+  },[library,setLibrary]);
+  useEffect(()=>{
+    const candidates=(library||[]).filter(item=>{
+      if(!item||!item.url||!isGenericContentTitle(item))return false;
+      const info=contentUrlInfo(item.url);
+      return info.platform==='Reddit'||!!redditTitleFromUrl(item.url);
+    }).slice(0,5);
+    if(candidates.length===0)return;
+    let cancelled=false;
+    (async()=>{
+      const updates={};
+      for(const item of candidates){
+        const clean=normalizeUrl(item.url);
+        const info=contentUrlInfo(clean);
+        const meta=await fetchContentMetadata(clean);
+        if(cancelled)return;
+        const nextTitle=polishSpanishText(meta.title||readableTitleFromUrl(clean,info));
+        if(!nextTitle||nextTitle===polishSpanishText(item.title||'')||isGenericContentTitle({...item,title:nextTitle},info))continue;
+        const nextTopic=meta.topic||item.topic||inferContentTopic(`${clean} ${nextTitle} ${item.note||''}`,info);
+        updates[item.id]={
+          title:nextTitle,
+          titleAutoEs:true,
+          platform:info.platform,
+          format:info.format,
+          type:info.type,
+          topic:nextTopic,
+          note:meta.description||item.note||`${fallbackContentDescription(clean,info)} Categoría: ${nextTopic}.`,
+          tags:Array.from(new Set([info.platform,info.format,nextTopic,...(Array.isArray(item.tags)?item.tags:[])]
             .map(t=>String(t||'').trim()).filter(Boolean))),
         };
       }
@@ -4889,8 +5020,41 @@ function ContentScreen({library,setLibrary,embedded=false}){
   function patchItem(id,patch){setLibrary(prev=>(prev||[]).map(x=>x.id===id?{...x,...patch,updatedAt:Date.now()}:x));}
   function removeItem(id){setLibrary(prev=>(prev||[]).filter(x=>x.id!==id));}
   function openItem(item){if(item.url)window.open(item.url,'_blank','noopener,noreferrer');}
+  function startEditItem(item){
+    setEditingItem({
+      id:item.id,
+      title:item.title||'',
+      url:item.url||'',
+      topic:item.topic||'',
+      note:item.note||'',
+      type:item.type||'articulo',
+      status:item.status||'pendiente',
+      tags:Array.isArray(item.tags)?item.tags.join(', '):'',
+    });
+  }
+  function saveEditItem(){
+    if(!editingItem||!editingItem.title.trim())return;
+    const cleanUrl=normalizeUrl(editingItem.url);
+    const info=contentUrlInfo(cleanUrl);
+    const finalTopic=editingItem.topic.trim()||inferContentTopic(`${cleanUrl} ${editingItem.title} ${editingItem.note}`,info);
+    const finalType=editingItem.type||info.type;
+    const manualTags=editingItem.tags.split(',').map(t=>String(t||'').trim()).filter(Boolean);
+    patchItem(editingItem.id,{
+      title:editingItem.title.trim(),
+      url:cleanUrl,
+      topic:finalTopic,
+      note:editingItem.note.trim(),
+      type:finalType,
+      status:editingItem.status||'pendiente',
+      platform:info.platform,
+      format:info.format,
+      titleAutoEs:true,
+      tags:Array.from(new Set([info.platform,info.format,finalTopic,...manualTags].filter(Boolean))),
+    });
+    setEditingItem(null);
+  }
 
-  const FilterRow=<div style={{display:'flex',gap:8,overflowX:'auto',paddingBottom:2}} className="scroll">
+  const FilterRow=<div style={{display:'flex',gap:8,overflowX:'auto',paddingBottom:2,width:'100%',maxWidth:'100%',minWidth:0}} className="scroll">
     {[
       {id:'todos',label:'Todo',count:counts.todos,color:'var(--accent)'},
       {id:'pendiente',label:'Pendiente',count:counts.pendiente,color:'var(--sys-amber)'},
@@ -4901,7 +5065,7 @@ function ContentScreen({library,setLibrary,embedded=false}){
     ].map(f=><button key={f.id} onClick={()=>setFilter(f.id)}
       style={{display:'flex',alignItems:'center',gap:7,padding:isD?'7px 12px':'6px 10px',
         borderRadius:999,background:filter===f.id?f.color:'var(--fill-1)',
-        color:filter===f.id?'#fff':'var(--text-2)',fontSize:isD?13:12,fontWeight:600,whiteSpace:'nowrap'}}>
+        color:filter===f.id?(f.color==='var(--accent)'?'var(--accent-ink)':'#fff'):'var(--text-2)',fontSize:isD?13:12,fontWeight:600,whiteSpace:'nowrap'}}>
       {f.label}<span style={{opacity:filter===f.id?0.85:0.55}}>{f.count}</span>
     </button>)}
   </div>;
@@ -4917,7 +5081,7 @@ function ContentScreen({library,setLibrary,embedded=false}){
       <button onClick={()=>{resetForm();setAdding(false);}} style={{padding:'8px 12px',borderRadius:10,
         background:'var(--fill-1)',fontSize:13,color:'var(--text-3)',fontWeight:600}}>Cancelar</button>
       <button onClick={addContent} disabled={!cleanDraftUrl} style={{padding:'8px 13px',borderRadius:10,
-        background:cleanDraftUrl?'var(--accent)':'var(--fill-2)',color:cleanDraftUrl?'#fff':'var(--text-3)',
+        background:cleanDraftUrl?'var(--accent)':'var(--fill-2)',color:cleanDraftUrl?'var(--accent-ink)':'var(--text-3)',
         fontSize:13,fontWeight:600,cursor:cleanDraftUrl?'pointer':'default'}}>Guardar</button>
     </div>
     {cleanDraftUrl&&<div style={{display:'flex',alignItems:'flex-start',gap:10,padding:'12px 12px',
@@ -4956,6 +5120,51 @@ function ContentScreen({library,setLibrary,embedded=false}){
     {shown.map((item,i)=>{
       const typeMeta=CONTENT_TYPES.find(t=>t.id===item.type)||CONTENT_TYPES[4];
       const statusMeta=CONTENT_STATUS.find(s=>s.id===item.status)||CONTENT_STATUS[0];
+      if(editingItem?.id===item.id)return<div key={item.id} style={{padding:isD?'16px 18px':'14px',borderTop:i>0?'0.5px solid var(--separator)':'none',
+        background:'linear-gradient(180deg,var(--fill-1),transparent)'}}>
+        <div style={{display:'grid',gridTemplateColumns:isD?'1fr 180px 140px':'1fr',gap:10,marginBottom:10}}>
+          <input value={editingItem.title} autoFocus onChange={e=>setEditingItem(v=>({...v,title:e.target.value}))}
+            onKeyDown={e=>{if(e.key==='Enter')saveEditItem();if(e.key==='Escape')setEditingItem(null);}}
+            placeholder="Título"
+            style={{width:'100%',fontSize:15,fontWeight:700,color:'var(--text-1)',background:'var(--surface-1)',
+              border:'0.5px solid var(--hairline)',borderRadius:10,padding:'9px 11px',fontFamily:'inherit'}}/>
+          <select value={editingItem.type} onChange={e=>setEditingItem(v=>({...v,type:e.target.value}))}
+            style={{width:'100%',fontSize:13,color:'var(--text-1)',background:'var(--surface-1)',
+              border:'0.5px solid var(--hairline)',borderRadius:10,padding:'9px 10px',fontFamily:'inherit'}}>
+            {CONTENT_TYPES.map(t=><option key={t.id} value={t.id}>{t.label}</option>)}
+          </select>
+          <select value={editingItem.status} onChange={e=>setEditingItem(v=>({...v,status:e.target.value}))}
+            style={{width:'100%',fontSize:13,color:'var(--text-1)',background:'var(--surface-1)',
+              border:'0.5px solid var(--hairline)',borderRadius:10,padding:'9px 10px',fontFamily:'inherit'}}>
+            {CONTENT_STATUS.map(s=><option key={s.id} value={s.id}>{s.label}</option>)}
+          </select>
+        </div>
+        <div style={{display:'grid',gridTemplateColumns:isD?'1fr 180px':'1fr',gap:10,marginBottom:10}}>
+          <input value={editingItem.url} onChange={e=>setEditingItem(v=>({...v,url:e.target.value}))}
+            placeholder="URL"
+            style={{width:'100%',fontSize:13,color:'var(--text-1)',background:'var(--surface-1)',
+              border:'0.5px solid var(--hairline)',borderRadius:10,padding:'9px 11px',fontFamily:'inherit'}}/>
+          <input value={editingItem.topic} onChange={e=>setEditingItem(v=>({...v,topic:e.target.value}))}
+            placeholder="Tema"
+            style={{width:'100%',fontSize:13,color:'var(--text-1)',background:'var(--surface-1)',
+              border:'0.5px solid var(--hairline)',borderRadius:10,padding:'9px 11px',fontFamily:'inherit'}}/>
+        </div>
+        <textarea value={editingItem.note} onChange={e=>setEditingItem(v=>({...v,note:e.target.value}))}
+          placeholder="Nota"
+          style={{width:'100%',minHeight:64,resize:'vertical',fontSize:13,color:'var(--text-1)',background:'var(--surface-1)',
+            border:'0.5px solid var(--hairline)',borderRadius:10,padding:'9px 11px',fontFamily:'inherit',lineHeight:1.45,marginBottom:10}}/>
+        <input value={editingItem.tags} onChange={e=>setEditingItem(v=>({...v,tags:e.target.value}))}
+          placeholder="Etiquetas separadas por coma"
+          style={{width:'100%',fontSize:12.5,color:'var(--text-1)',background:'var(--surface-1)',
+            border:'0.5px solid var(--hairline)',borderRadius:10,padding:'8px 11px',fontFamily:'inherit',marginBottom:10}}/>
+        <div style={{display:'flex',justifyContent:'flex-end',gap:8}}>
+          <button onClick={()=>setEditingItem(null)} style={{padding:'7px 13px',borderRadius:10,
+            background:'var(--fill-1)',color:'var(--text-3)',fontSize:13,fontWeight:600}}>Cancelar</button>
+          <button onClick={saveEditItem} disabled={!editingItem.title.trim()} style={{padding:'7px 14px',borderRadius:10,
+            background:editingItem.title.trim()?'var(--accent)':'var(--fill-2)',
+            color:editingItem.title.trim()?'var(--accent-ink)':'var(--text-3)',fontSize:13,fontWeight:700}}>Guardar</button>
+        </div>
+      </div>;
       return<div key={item.id} style={{padding:isD?'14px 18px':'12px 14px',borderTop:i>0?'0.5px solid var(--separator)':'none'}}>
         <div style={{display:'flex',gap:12,alignItems:'flex-start'}}>
           <button onClick={()=>openItem(item)} style={{width:38,height:38,borderRadius:11,background:`${typeMeta.color}22`,
@@ -4979,6 +5188,11 @@ function ContentScreen({library,setLibrary,embedded=false}){
             </div>}
           </div>
           <div style={{display:'flex',gap:5,flexShrink:0}}>
+            <button onClick={()=>startEditItem(item)}
+              style={{height:28,padding:'0 10px',borderRadius:14,background:'var(--fill-1)',color:'var(--text-2)',
+                display:'flex',alignItems:'center',justifyContent:'center',fontSize:11,fontWeight:700}}>
+              Editar
+            </button>
             <button onClick={()=>patchItem(item.id,{status:item.status==='visto'?'pendiente':'visto'})}
               style={{width:28,height:28,borderRadius:14,background:'var(--fill-1)',color:item.status==='visto'?'var(--sys-green)':'var(--text-3)',display:'flex',alignItems:'center',justifyContent:'center'}}>
               <ICheck size={14}/>
@@ -4997,8 +5211,8 @@ function ContentScreen({library,setLibrary,embedded=false}){
 
   const Body=<div className="scroll zp-page" style={{flex:1,minHeight:0,paddingBottom:14}}>
       <div style={{padding:`0 ${px}px`,display:'flex',flexDirection:'column',gap:isD?14:10}}>
-        <div style={{display:isD?'grid':'flex',gridTemplateColumns:isD?'1fr 240px':undefined,flexDirection:'column',gap:isD?14:10}}>
-          <div style={{display:'flex',flexDirection:'column',gap:isD?14:10}}>
+        <div style={{display:isD?'grid':'flex',gridTemplateColumns:isD?'minmax(0,1fr) 240px':undefined,flexDirection:'column',gap:isD?14:10,minWidth:0}}>
+          <div style={{display:'flex',flexDirection:'column',gap:isD?14:10,minWidth:0}}>
             {AddCard}
             {FilterRow}
             {ItemList}
@@ -5022,6 +5236,7 @@ function ContentScreen({library,setLibrary,embedded=false}){
 const ACCENT_OPTIONS=[
   {id:'blue',c:'#3B82F6'},{id:'indigo',c:'#6366F1'},{id:'violet',c:'#8B5CF6'},
   {id:'emerald',c:'#10B981'},{id:'amber',c:'#F59E0B'},{id:'rose',c:'#F43F5E'},
+  {id:'soyon',c:'#F0B47F'},
 ];
 const ACCENTS={
   blue:{c:'#3B82F6',s:'rgba(59,130,246,0.12)',ss:'rgba(59,130,246,0.28)'},
@@ -5030,6 +5245,7 @@ const ACCENTS={
   emerald:{c:'#10B981',s:'rgba(16,185,129,0.12)',ss:'rgba(16,185,129,0.28)'},
   amber:{c:'#F59E0B',s:'rgba(245,158,11,0.14)',ss:'rgba(245,158,11,0.32)'},
   rose:{c:'#F43F5E',s:'rgba(244,63,94,0.12)',ss:'rgba(244,63,94,0.28)'},
+  soyon:{c:'#F0B47F',s:'rgba(240,180,127,0.16)',ss:'rgba(240,180,127,0.36)'},
 };
 
 function Toggle({value,onChange}){
@@ -5165,7 +5381,7 @@ function AjustesScreen({theme,setTheme,accent,setAccent,onBack,user,onSignOut,si
                     style={{flex:1,fontSize:15,fontWeight:600,color:'var(--text-1)',background:'var(--fill-1)',
                       border:'none',outline:'none',borderRadius:8,padding:'4px 8px',fontFamily:'inherit'}}/>
                   <button onClick={saveDisplayName} disabled={savingName} style={{padding:'5px 12px',borderRadius:8,
-                    background:'var(--accent)',color:'#fff',fontSize:12,fontWeight:600,border:'none',cursor:'pointer'}}>
+                    background:'var(--accent)',color:'var(--accent-ink)',fontSize:12,fontWeight:600,border:'none',cursor:'pointer'}}>
                     {savingName?'…':'OK'}
                   </button>
                   <button onClick={()=>setEditName(false)} style={{padding:'5px 10px',borderRadius:8,
@@ -5200,12 +5416,16 @@ function AjustesScreen({theme,setTheme,accent,setAccent,onBack,user,onSignOut,si
             <div style={{padding:'14px 18px',borderBottom:'0.5px solid var(--separator)'}}>
               <div style={{fontSize:13,color:'var(--text-3)',marginBottom:10}}>Tema</div>
               <div style={{display:'flex',gap:8}}>
-                {['light','dark'].map(t=><button key={t} onClick={()=>setTheme(t)} style={{
+                {[
+                  {id:'light',label:'Claro',icon:<ISun size={14} sw={1.8}/>},
+                  {id:'dark',label:'Oscuro',icon:<IMoon size={14} sw={1.8}/>},
+                  {id:'soyon',label:'Soyon',icon:<span style={{width:14,height:14,borderRadius:4,background:'#F0B47F',boxShadow:'inset 0 0 0 2px rgba(20,19,18,0.18)'}}/>},
+                ].map(t=><button key={t.id} onClick={()=>{setTheme(t.id);if(t.id==='soyon')setAccent('soyon');}} style={{
                   flex:1,padding:'9px',borderRadius:11,fontSize:13,fontWeight:600,border:'none',cursor:'pointer',
-                  background:theme===t?'var(--accent)':'var(--fill-1)',
-                  color:theme===t?'#fff':'var(--text-2)',
+                  background:theme===t.id?'var(--accent)':'var(--fill-1)',
+                  color:theme===t.id?'var(--accent-ink)':'var(--text-2)',
                   display:'inline-flex',alignItems:'center',justifyContent:'center',gap:6}}>
-                  {t==='light'?<><ISun size={14} sw={1.8}/>Claro</>:<><IMoon size={14} sw={1.8}/>Oscuro</>}
+                  {t.icon}{t.label}
                 </button>)}
               </div>
             </div>
@@ -5216,7 +5436,7 @@ function AjustesScreen({theme,setTheme,accent,setAccent,onBack,user,onSignOut,si
                   width:36,height:36,borderRadius:18,background:a.c,border:'none',cursor:'pointer',flexShrink:0,
                   boxShadow:accent===a.id?`0 0 0 3px var(--surface-1),0 0 0 5px ${a.c}`:'0 1px 3px rgba(0,0,0,0.15)',
                   display:'flex',alignItems:'center',justifyContent:'center'}}>
-                  {accent===a.id&&<span style={{color:'#fff'}}><ICheck size={14}/></span>}
+                  {accent===a.id&&<span style={{color:a.id==='soyon'?'#21160E':'#fff'}}><ICheck size={14}/></span>}
                 </button>)}
               </div>
             </div>
@@ -5261,7 +5481,7 @@ function AjustesScreen({theme,setTheme,accent,setAccent,onBack,user,onSignOut,si
                   onClick={()=>{setSetting('defaultLane',l.id);try{localStorage.setItem('zp_draft_lane',JSON.stringify(l.id));}catch{};}}
                   style={{flex:1,padding:'7px 4px',borderRadius:9,fontSize:12,fontWeight:600,border:'none',cursor:'pointer',
                     background:(s.defaultLane||'enfoque')===l.id?'var(--accent)':'var(--fill-1)',
-                    color:(s.defaultLane||'enfoque')===l.id?'#fff':'var(--text-3)'}}>{l.label}</button>)}
+                    color:(s.defaultLane||'enfoque')===l.id?'var(--accent-ink)':'var(--text-3)'}}>{l.label}</button>)}
               </div>
             </div>
           </Card>
@@ -5432,7 +5652,7 @@ function AuthScreen({dark}){
                 background:remember?'var(--accent)':'transparent',
                 border:`1.5px solid ${remember?'var(--accent)':'var(--separator-strong)'}`,
                 display:'inline-flex',alignItems:'center',justifyContent:'center',
-                color:'#fff',transition:'background 0.15s,border-color 0.15s'}}>
+                color:'var(--accent-ink)',transition:'background 0.15s,border-color 0.15s'}}>
               {remember&&<ICheck size={12} sw={2.6}/>}
             </span>
             <input type="checkbox" checked={remember} onChange={e=>{const v=e.target.checked;setRemember(v);if(!v)clearRemembered();}}
@@ -5449,7 +5669,7 @@ function AuthScreen({dark}){
 
           <button type="submit" disabled={loading} style={{marginTop:6,padding:'13px 16px',
             borderRadius:12,background:loading?'var(--accent-soft-strong)':'var(--accent)',
-            color:'#fff',fontSize:15,fontWeight:600,letterSpacing:-0.1,cursor:loading?'default':'pointer',
+            color:'var(--accent-ink)',fontSize:15,fontWeight:600,letterSpacing:-0.1,cursor:loading?'default':'pointer',
             transition:'background 0.15s',display:'flex',alignItems:'center',justifyContent:'center',gap:8}}>
             {loading&&<span style={{width:14,height:14,borderRadius:7,
               border:'2px solid rgba(255,255,255,0.4)',borderTopColor:'#fff',
@@ -5483,7 +5703,7 @@ function App(){
   const[authReady,setAuthReady]=useState(false);
   const[signingOut,setSigningOut]=useState(false);
   const[syncedFor,setSyncedFor]=useState(null);
-  const dark=theme==='dark';
+  const dark=theme==='dark'||theme==='soyon';
 
   useEffect(()=>{
     const fn=()=>{
@@ -5555,7 +5775,93 @@ function App(){
 
   useEffect(()=>{
     const r=document.documentElement;
-    if(dark){
+    if(theme==='soyon'){
+      r.style.setProperty('--accent-ink',accent==='soyon'?'#21160E':'#FFFFFF');
+      r.style.setProperty('--sys-green','#9BBF88');
+      r.style.setProperty('--sys-green-soft','rgba(155,191,136,0.18)');
+      r.style.setProperty('--sys-amber','#F0B47F');
+      r.style.setProperty('--sys-amber-soft','rgba(240,180,127,0.20)');
+      r.style.setProperty('--sys-red','#E1695F');
+      r.style.setProperty('--sys-red-soft','rgba(225,105,95,0.18)');
+      r.style.setProperty('--sys-orange','#E8A15F');
+      r.style.setProperty('--sys-purple','#C792E8');
+      r.style.setProperty('--sys-indigo','#A7A0EA');
+      r.style.setProperty('--sys-indigo-soft','rgba(167,160,234,0.16)');
+      r.style.setProperty('--sys-indigo-soft-strong','rgba(167,160,234,0.30)');
+      r.style.setProperty('--score-good','#9BBF88');
+      r.style.setProperty('--score-good-soft','rgba(155,191,136,0.16)');
+      r.style.setProperty('--score-mid','#F0B47F');
+      r.style.setProperty('--score-mid-soft','rgba(240,180,127,0.18)');
+      r.style.setProperty('--score-low','#E1695F');
+      r.style.setProperty('--score-low-soft','rgba(225,105,95,0.16)');
+      r.style.setProperty('--day-festivo','rgba(245,216,180,0.58)');
+      r.style.setProperty('--day-festivo-soft','rgba(255,226,191,0.09)');
+      r.style.setProperty('--day-festivo-border','rgba(255,226,191,0.22)');
+      r.style.setProperty('--day-vacaciones','rgba(245,216,180,0.58)');
+      r.style.setProperty('--day-vacaciones-soft','rgba(255,226,191,0.09)');
+      r.style.setProperty('--day-vacaciones-border','rgba(255,226,191,0.22)');
+      r.style.setProperty('--day-mantenimiento','rgba(245,216,180,0.58)');
+      r.style.setProperty('--day-mantenimiento-soft','rgba(255,226,191,0.09)');
+      r.style.setProperty('--day-mantenimiento-border','rgba(255,226,191,0.22)');
+      r.style.setProperty('--weekend-color','rgba(245,216,180,0.50)');
+      r.style.setProperty('--weekend-soft','rgba(255,226,191,0.07)');
+      r.style.setProperty('--calendar-cell-bg','rgba(255,226,191,0.065)');
+      r.style.setProperty('--calendar-cell-border','rgba(255,226,191,0.14)');
+      r.style.setProperty('--app-bg','#121110');
+      r.style.setProperty('--surface-1','#22201D');
+      r.style.setProperty('--surface-ink','#0E0D0C');
+      r.style.setProperty('--fill-1','rgba(255,226,191,0.14)');
+      r.style.setProperty('--fill-2','rgba(255,226,191,0.24)');
+      r.style.setProperty('--text-1','#FFF4E5');
+      r.style.setProperty('--text-2','rgba(255,244,229,0.88)');
+      r.style.setProperty('--text-3','rgba(245,216,180,0.70)');
+      r.style.setProperty('--separator','rgba(255,226,191,0.20)');
+      r.style.setProperty('--separator-strong','rgba(255,226,191,0.42)');
+      r.style.setProperty('--hairline','rgba(255,226,191,0.24)');
+      r.style.setProperty('--hairline-top','rgba(255,226,191,0.14)');
+      r.style.setProperty('--hairline-bot','rgba(0,0,0,0.62)');
+      r.style.setProperty('--glass','rgba(34,32,29,0.84)');
+      r.style.setProperty('--glass-dark','rgba(34,32,29,0.84)');
+      r.style.setProperty('--shadow-a1','0.24');
+      r.style.setProperty('--shadow-a2','0.34');
+      r.style.setProperty('--logo-bg-1','#3A2C23');
+      r.style.setProperty('--logo-bg-2','#1A1815');
+      r.style.setProperty('--logo-bg-3','#0D0C0B');
+      r.style.setProperty('--logo-glow','#F0B47F');
+      r.style.setProperty('--logo-mark-1','#FFF4E5');
+      r.style.setProperty('--logo-mark-2','#F0B47F');
+    }else if(theme==='dark'){
+      r.style.setProperty('--accent-ink','#FFFFFF');
+      r.style.setProperty('--sys-green','#34C759');
+      r.style.setProperty('--sys-green-soft','rgba(52,199,89,0.14)');
+      r.style.setProperty('--sys-amber','#FF9F0A');
+      r.style.setProperty('--sys-amber-soft','rgba(255,159,10,0.14)');
+      r.style.setProperty('--sys-red','#FF3B30');
+      r.style.setProperty('--sys-red-soft','rgba(255,59,48,0.14)');
+      r.style.setProperty('--sys-orange','#FF6A00');
+      r.style.setProperty('--sys-purple','#AF52DE');
+      r.style.setProperty('--sys-indigo','#5E5CE6');
+      r.style.setProperty('--sys-indigo-soft','rgba(94,92,230,0.12)');
+      r.style.setProperty('--sys-indigo-soft-strong','rgba(94,92,230,0.25)');
+      r.style.setProperty('--score-good','var(--sys-green)');
+      r.style.setProperty('--score-good-soft','var(--sys-green-soft)');
+      r.style.setProperty('--score-mid','var(--sys-amber)');
+      r.style.setProperty('--score-mid-soft','var(--sys-amber-soft)');
+      r.style.setProperty('--score-low','var(--sys-red)');
+      r.style.setProperty('--score-low-soft','var(--sys-red-soft)');
+      r.style.setProperty('--day-festivo','#8E8E93');
+      r.style.setProperty('--day-festivo-soft','rgba(142,142,147,0.14)');
+      r.style.setProperty('--day-festivo-border','rgba(142,142,147,0.36)');
+      r.style.setProperty('--day-vacaciones','#8E8E93');
+      r.style.setProperty('--day-vacaciones-soft','rgba(142,142,147,0.14)');
+      r.style.setProperty('--day-vacaciones-border','rgba(142,142,147,0.36)');
+      r.style.setProperty('--day-mantenimiento','#8E8E93');
+      r.style.setProperty('--day-mantenimiento-soft','rgba(142,142,147,0.14)');
+      r.style.setProperty('--day-mantenimiento-border','rgba(142,142,147,0.36)');
+      r.style.setProperty('--weekend-color','#8E8E93');
+      r.style.setProperty('--weekend-soft','rgba(142,142,147,0.14)');
+      r.style.setProperty('--calendar-cell-bg','rgba(120,120,128,0.24)');
+      r.style.setProperty('--calendar-cell-border','rgba(84,84,88,0.36)');
       r.style.setProperty('--app-bg','#000');
       r.style.setProperty('--surface-1','#1C1C1E');
       r.style.setProperty('--surface-ink','#0A0A0C');
@@ -5570,9 +5876,47 @@ function App(){
       r.style.setProperty('--hairline-top','rgba(255,255,255,0.07)');
       r.style.setProperty('--hairline-bot','rgba(0,0,0,0.4)');
       r.style.setProperty('--glass','rgba(28,30,35,0.66)');
+      r.style.setProperty('--glass-dark','rgba(28,30,35,0.66)');
       r.style.setProperty('--shadow-a1','0.2');
       r.style.setProperty('--shadow-a2','0.3');
+      r.style.setProperty('--logo-bg-1','#1B2A4E');
+      r.style.setProperty('--logo-bg-2','#0A1428');
+      r.style.setProperty('--logo-bg-3','#060B1A');
+      r.style.setProperty('--logo-glow','#60A5FA');
+      r.style.setProperty('--logo-mark-1','#F8FAFF');
+      r.style.setProperty('--logo-mark-2','#A7C0FF');
     }else{
+      r.style.setProperty('--accent-ink','#FFFFFF');
+      r.style.setProperty('--sys-green','#34C759');
+      r.style.setProperty('--sys-green-soft','rgba(52,199,89,0.14)');
+      r.style.setProperty('--sys-amber','#FF9F0A');
+      r.style.setProperty('--sys-amber-soft','rgba(255,159,10,0.14)');
+      r.style.setProperty('--sys-red','#FF3B30');
+      r.style.setProperty('--sys-red-soft','rgba(255,59,48,0.14)');
+      r.style.setProperty('--sys-orange','#FF6A00');
+      r.style.setProperty('--sys-purple','#AF52DE');
+      r.style.setProperty('--sys-indigo','#5E5CE6');
+      r.style.setProperty('--sys-indigo-soft','rgba(94,92,230,0.12)');
+      r.style.setProperty('--sys-indigo-soft-strong','rgba(94,92,230,0.25)');
+      r.style.setProperty('--score-good','var(--sys-green)');
+      r.style.setProperty('--score-good-soft','var(--sys-green-soft)');
+      r.style.setProperty('--score-mid','var(--sys-amber)');
+      r.style.setProperty('--score-mid-soft','var(--sys-amber-soft)');
+      r.style.setProperty('--score-low','var(--sys-red)');
+      r.style.setProperty('--score-low-soft','var(--sys-red-soft)');
+      r.style.setProperty('--day-festivo','#8E8E93');
+      r.style.setProperty('--day-festivo-soft','rgba(142,142,147,0.14)');
+      r.style.setProperty('--day-festivo-border','rgba(142,142,147,0.36)');
+      r.style.setProperty('--day-vacaciones','#8E8E93');
+      r.style.setProperty('--day-vacaciones-soft','rgba(142,142,147,0.14)');
+      r.style.setProperty('--day-vacaciones-border','rgba(142,142,147,0.36)');
+      r.style.setProperty('--day-mantenimiento','#8E8E93');
+      r.style.setProperty('--day-mantenimiento-soft','rgba(142,142,147,0.14)');
+      r.style.setProperty('--day-mantenimiento-border','rgba(142,142,147,0.36)');
+      r.style.setProperty('--weekend-color','#8E8E93');
+      r.style.setProperty('--weekend-soft','rgba(142,142,147,0.14)');
+      r.style.setProperty('--calendar-cell-bg','rgba(120,120,128,0.10)');
+      r.style.setProperty('--calendar-cell-border','rgba(60,60,67,0.10)');
       r.style.setProperty('--app-bg','#F2F2F7');
       r.style.setProperty('--surface-1','#FFFFFF');
       r.style.setProperty('--surface-ink','#111318');
@@ -5587,10 +5931,17 @@ function App(){
       r.style.setProperty('--hairline-top','rgba(255,255,255,0.7)');
       r.style.setProperty('--hairline-bot','rgba(0,0,0,0.04)');
       r.style.setProperty('--glass','rgba(255,255,255,0.72)');
+      r.style.setProperty('--glass-dark','rgba(28,30,35,0.66)');
       r.style.setProperty('--shadow-a1','0.04');
       r.style.setProperty('--shadow-a2','0.05');
+      r.style.setProperty('--logo-bg-1','#1B2A4E');
+      r.style.setProperty('--logo-bg-2','#0A1428');
+      r.style.setProperty('--logo-bg-3','#060B1A');
+      r.style.setProperty('--logo-glow','#60A5FA');
+      r.style.setProperty('--logo-mark-1','#F8FAFF');
+      r.style.setProperty('--logo-mark-2','#A7C0FF');
     }
-  },[dark]);
+  },[theme,accent]);
 
   const user=session?.user||null;
   const dataReady=!session||syncedFor===session.user.id;
