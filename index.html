@@ -6,12 +6,13 @@
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover"/>
 <meta name="apple-mobile-web-app-capable" content="yes"/>
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent"/>
-<link rel="manifest" href="manifest.webmanifest?v=20260428c"/>
-<link rel="apple-touch-icon" href="apple-touch-icon.png?v=20260428c"/>
+<meta name="theme-color" content="#F0B47F"/>
+<link rel="manifest" href="manifest.webmanifest?v=20260527a"/>
+<link rel="apple-touch-icon" href="apple-touch-icon.png?v=20260527a"/>
 <meta name="apple-mobile-web-app-title" content="Zuppi's Agenda"/>
 <style>
 :root {
-  --accent:#3B82F6; --accent-ink:#FFFFFF; --accent-soft:rgba(59,130,246,0.12); --accent-soft-strong:rgba(59,130,246,0.28);
+  --accent:#F0B47F; --accent-ink:#21160E; --accent-soft:rgba(240,180,127,0.16); --accent-soft-strong:rgba(240,180,127,0.36);
   --logo-bg-1:#1B2A4E; --logo-bg-2:#0A1428; --logo-bg-3:#060B1A;
   --logo-glow:#60A5FA; --logo-mark-1:#F8FAFF; --logo-mark-2:#A7C0FF;
   --app-bg:#F2F2F7; --surface-1:#FFFFFF; --surface-ink:#111318;
@@ -103,7 +104,7 @@ const SUPABASE_URL='https://wyfmmubrtkcgunwbagdq.supabase.co';
 const SUPABASE_KEY='sb_publishable_c-hn5yimnUx9ZGeSGI9-WA_RVjqR2-q';
 const PUSH_SUBSCRIPTIONS_FN='push-subscriptions';
 const SEND_REMINDERS_FN='send-calendar-reminders';
-const APP_ASSET_VERSION='20260428c';
+const APP_ASSET_VERSION='20260527a';
 const APP_BASE_URL=new URL('./',window.location.href);
 const SW_URL=new URL(`sw.js?v=${APP_ASSET_VERSION}`,APP_BASE_URL).href;
 const sb=window.supabase.createClient(SUPABASE_URL,SUPABASE_KEY,{
@@ -6218,7 +6219,7 @@ function AuthScreen({dark}){
 // ── APP ───────────────────────────────────────────────────────────────────────
 function App(){
   const[theme,setTheme]=useLS('zp_theme','light');
-  const[accent,setAccent]=useLS('zp_accent','blue');
+  const[accent,setAccent]=useLS('zp_accent','soyon');
   const[isDesktop,setIsDesktop]=useState(()=>window.innerWidth>=768);
   const[session,setSession]=useState(null);
   const[authReady,setAuthReady]=useState(false);
@@ -6229,7 +6230,7 @@ function App(){
   useEffect(()=>{
     const fn=()=>{
       try{const t=JSON.parse(localStorage.getItem('zp_theme')||'"light"');setTheme(t);}catch{}
-      try{const a=JSON.parse(localStorage.getItem('zp_accent')||'"blue"');setAccent(a);}catch{}
+      try{const a=JSON.parse(localStorage.getItem('zp_accent')||'"soyon"');setAccent(a);}catch{}
     };
     window.addEventListener('zp-resync',fn);
     return()=>window.removeEventListener('zp-resync',fn);
@@ -6263,7 +6264,7 @@ function App(){
       ensureRollover(); // Re-run after pull to fix any overwrite from remote data
       if(cancelled)return;
       try{const t=JSON.parse(localStorage.getItem('zp_theme')||'"light"');setTheme(t);}catch{}
-      try{const a=JSON.parse(localStorage.getItem('zp_accent')||'"blue"');setAccent(a);}catch{}
+      try{const a=JSON.parse(localStorage.getItem('zp_accent')||'"soyon"');setAccent(a);}catch{}
       setSyncedFor(uid);
       startRealtime(uid);
     })();
@@ -6292,6 +6293,13 @@ function App(){
     r.style.setProperty('--accent',a.c);
     r.style.setProperty('--accent-soft',a.s);
     r.style.setProperty('--accent-soft-strong',a.ss);
+    let themeMeta=document.querySelector('meta[name="theme-color"]');
+    if(!themeMeta){
+      themeMeta=document.createElement('meta');
+      themeMeta.setAttribute('name','theme-color');
+      document.head.appendChild(themeMeta);
+    }
+    themeMeta.setAttribute('content',a.c);
   },[accent]);
 
   useEffect(()=>{
