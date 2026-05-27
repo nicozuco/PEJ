@@ -282,8 +282,8 @@ const DEF_CAL_EVENTS={};
 // Real Supabase schema: public.user_data(user_id pk, journal jsonb, habits jsonb,
 //   settings jsonb, twelve jsonb, created_at, updated_at). One row per user.
 // Local zp_* keys are mapped into those 4 jsonb columns at save/load time.
-const SYNC_SKIP=new Set(['zp_tab','zp_hoy_tab','zp_auth','zp_auth_remember','zp_draft_task','zp_draft_lane','zp_last_sync','zp_task_dates']);
-function shouldSync(key){return key&&key.startsWith('zp_')&&!SYNC_SKIP.has(key);}
+const SYNC_SKIP=new Set(['zp_tab','zp_hoy_tab','zp_auth','zp_auth_remember','zp_draft_task','zp_draft_lane','zp_last_sync','zp_task_dates','zp_focus_session','zp_notif_fired']);
+function shouldSync(key){return key&&key.startsWith('zp_')&&!SYNC_SKIP.has(key)&&!key.startsWith('zp_skipped_today_');}
 
 function buildSyncPayload(){
   const settings={},habits={},journal={tasks:{},mental:{},cierre:{},rutina:{},mentalReflex:{},reflexions:{},monthReflexions:{},expenses:{}};
@@ -297,6 +297,8 @@ function buildSyncPayload(){
     if(v===undefined)continue;
     if(k==='zp_theme')settings.theme=v;
     else if(k==='zp_accent')settings.accent=v;
+    else if(k==='zp_soft_mode')settings.softMode=v;
+    else if(k==='zp_settings')settings.appSettings=v;
     else if(k==='zp_streak')settings.streak=v;
     else if(k==='zp_habit_template')settings.habitTemplate=v;
     else if(k==='zp_twelve')twelve=v||{};
@@ -639,6 +641,8 @@ function applySyncRow(row,dirty){
   };
   if(s.theme!==undefined)put('zp_theme',s.theme);
   if(s.accent!==undefined)put('zp_accent',s.accent);
+  if(s.softMode!==undefined)put('zp_soft_mode',s.softMode);
+  if(s.appSettings!==undefined)put('zp_settings',s.appSettings);
   if(s.streak!==undefined)put('zp_streak',s.streak);
   if(j.habitDeletes!==undefined)put(HABIT_DELETES_KEY,j.habitDeletes);
   if(s.habitTemplate!==undefined)put('zp_habit_template',s.habitTemplate);
@@ -883,6 +887,8 @@ const TASK_DELETES_KEY='zp_task_deletes';
 const TASK_COMPLETIONS_KEY='zp_task_completions';
 const TASK_ARCHIVE_KEY='zp_task_archive';
 const DEF_TASKS={top3:[],enfoque:[],parking:[]};
+const TASK_DURATION_OPTIONS=[5,10,15,25,45,60];
+function defaultTaskDuration(lane){return lane==='parking'?10:25;}
 const DEF_MENTAL=[
   {id:'miedo',label:'Miedo',desc:'¿Actuaste con miedo o con claridad?',state:null},
   {id:'codicia',label:'Codicia',desc:'¿Tomaste más riesgo del planificado?',state:null},
@@ -1236,8 +1242,17 @@ function touchTask(task,lane){
   else delete next.completedAt;
   return next;
 }
-function makeTask(id,text,createdDate,lane){
-  return{id,text,done:false,subtasks:[],createdDate,...(lane?{lane}:{}),updatedAt:taskNow()};
+function makeTask(id,text,createdDate,lane,meta={}){
+  const duration=parseInt(meta.durationMinutes,10);
+  return{
+    id,text,done:false,subtasks:[],createdDate,
+    ...(lane?{lane}:{}),
+    durationMinutes:Number.isFinite(duration)&&duration>0?duration:defaultTaskDuration(lane),
+    ...(meta.startTime?{startTime:meta.startTime}:{}),
+    ...(meta.emoji?{emoji:meta.emoji}:{}),
+    ...(meta.energy?{energy:meta.energy}:{}),
+    updatedAt:taskNow(),
+  };
 }
 function toggleTaskInBuckets(tasks,lane,id,nextDone=null,currentDone=null){
   const lanes=['top3','enfoque','parking'];
@@ -1372,6 +1387,145 @@ function writeTasksForDate(dateKeyValue,updater){
   pushRemote(key);
   notifyLSKey(key);
   return normalized;
+}
+function focusSessionFromStorage(){
+  const raw=readLSJSON('zp_focus_session',null);
+  if(!raw||raw.dateKey!==TODAY_KEY)return null;
+  const durationMinutes=Math.max(1,parseInt(raw.durationMinutes,10)||25);
+  let remainingSeconds=Math.max(0,parseInt(raw.remainingSeconds,10)||durationMinutes*60);
+  let status=raw.status||'idle';
+  let startedAt=raw.startedAt||new Date().toISOString();
+  if(status==='running'){
+    const elapsed=Math.floor((Date.now()-Date.parse(startedAt))/1000);
+    remainingSeconds=Math.max(0,remainingSeconds-elapsed);
+    startedAt=new Date().toISOString();
+    if(remainingSeconds<=0)status='done';
+  }
+  return{
+    id:String(raw.id||''),type:raw.type||'task',title:String(raw.title||'Focus'),
+    startedAt,durationMinutes,remainingSeconds,status,dateKey:TODAY_KEY,
+  };
+}
+function saveFocusSession(session){
+  try{
+    if(!session)localStorage.removeItem('zp_focus_session');
+    else localStorage.setItem('zp_focus_session',JSON.stringify(session));
+  }catch{}
+}
+function useFocusSession(){
+  const[session,setSessionState]=useState(()=>focusSessionFromStorage());
+  useEffect(()=>{if(session)saveFocusSession(session);},[]);
+  const setSession=useCallback(next=>{
+    setSessionState(curr=>{
+      const value=typeof next==='function'?next(curr):next;
+      saveFocusSession(value);
+      return value;
+    });
+  },[]);
+  useEffect(()=>{
+    if(!session||session.status!=='running')return;
+    const tick=()=>{
+      setSession(curr=>{
+        if(!curr||curr.status!=='running')return curr;
+        const elapsed=Math.floor((Date.now()-Date.parse(curr.startedAt||new Date().toISOString()))/1000);
+        const remaining=Math.max(0,(parseInt(curr.remainingSeconds,10)||0)-elapsed);
+        const next={...curr,remainingSeconds:remaining,startedAt:new Date().toISOString(),status:remaining<=0?'done':'running'};
+        return next;
+      });
+    };
+    const id=setInterval(tick,1000);
+    return()=>clearInterval(id);
+  },[session?.status,session?.id]);
+  function start(action,minutes=null){
+    if(!action)return;
+    const durationMinutes=Math.max(1,parseInt(minutes||action.durationMinutes||getActionDuration(action),10)||25);
+    setSession({
+      id:action.key||action.id,type:action.type,title:action.title,
+      startedAt:new Date().toISOString(),durationMinutes,remainingSeconds:durationMinutes*60,
+      status:'running',dateKey:TODAY_KEY,
+    });
+  }
+  function resume(){
+    setSession(curr=>curr?{...curr,startedAt:new Date().toISOString(),status:'running'}:curr);
+  }
+  function pause(){
+    setSession(curr=>{
+      if(!curr)return curr;
+      const elapsed=curr.status==='running'?Math.floor((Date.now()-Date.parse(curr.startedAt||new Date().toISOString()))/1000):0;
+      return{...curr,remainingSeconds:Math.max(0,(curr.remainingSeconds||0)-elapsed),startedAt:new Date().toISOString(),status:'paused'};
+    });
+  }
+  function reset(){
+    setSession(curr=>curr?{...curr,startedAt:new Date().toISOString(),remainingSeconds:curr.durationMinutes*60,status:'idle'}:curr);
+  }
+  function addMinutes(mins){
+    setSession(curr=>curr?{...curr,remainingSeconds:(curr.remainingSeconds||0)+mins*60,durationMinutes:(curr.durationMinutes||0)+mins}:curr);
+  }
+  function finish(){
+    setSession(curr=>curr?{...curr,remainingSeconds:0,status:'done'}:curr);
+  }
+  return{session,start,resume,pause,reset,addMinutes,finish,setSession};
+}
+function formatFocusTime(seconds){
+  const total=Math.max(0,parseInt(seconds,10)||0);
+  const m=Math.floor(total/60);
+  const s=total%60;
+  return`${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}`;
+}
+function actionKey(type,id,lane=''){
+  return`${type}:${lane||''}:${id}`;
+}
+function skippedTodayKey(dateKeyValue=TODAY_KEY){return`zp_skipped_today_${dateKeyValue}`;}
+function skippedToday(dateKeyValue=TODAY_KEY){
+  const v=readLSJSON(skippedTodayKey(dateKeyValue),[]);
+  return Array.isArray(v)?v:[];
+}
+function saveSkippedToday(ids,dateKeyValue=TODAY_KEY){
+  try{localStorage.setItem(skippedTodayKey(dateKeyValue),JSON.stringify(Array.from(new Set(ids)).filter(Boolean)));}catch{}
+}
+function getActionDuration(action){
+  if(!action)return 25;
+  if(action.type==='habit'||action.type==='routine')return 10;
+  if(action.type==='task')return parseInt(action.durationMinutes,10)||defaultTaskDuration(action.lane);
+  return parseInt(action.durationMinutes,10)||10;
+}
+function makeAction(type,item,extra={}){
+  const lane=extra.lane||item?.lane||'';
+  const id=String(item?.id||`${type}-${Date.now()}`);
+  const title=type==='habit'?item.name:type==='routine'?item.text:item.text||item.title||'Acción';
+  return{
+    key:actionKey(type,id,lane),id,type,lane,title,
+    durationMinutes:getActionDuration({...item,type,lane}),
+    startTime:item?.startTime||item?.time||'',
+    item,
+    ...extra,
+  };
+}
+function sortActionsWithSkipped(actions,dateKeyValue=TODAY_KEY){
+  const skipped=new Set(skippedToday(dateKeyValue));
+  const open=actions.filter(a=>!skipped.has(a.key));
+  const later=actions.filter(a=>skipped.has(a.key));
+  return open.length?[...open,...later]:actions;
+}
+function getTodayActions(tasks,habits,rutina,dateKeyValue=TODAY_KEY){
+  const normalized=normalizeTaskBuckets(tasks||DEF_TASKS).tasks;
+  const actions=[
+    ...(normalized.top3||[]).filter(t=>!t.done).map(t=>makeAction('task',t,{lane:'top3',kindLabel:'Tarea'})),
+    ...(normalized.enfoque||[]).filter(t=>!t.done).map(t=>makeAction('task',t,{lane:'enfoque',kindLabel:'Tarea'})),
+    ...(habits||[]).filter(h=>!h.done).map(h=>makeAction('habit',h,{kindLabel:'Hábito'})),
+    ...(rutina||[]).filter(r=>!r.done).map(r=>makeAction('routine',r,{kindLabel:'Rutina'})),
+  ];
+  return sortActionsWithSkipped(actions,dateKeyValue);
+}
+function dailyTimeline(calEvents,tasks,rutina,dateKeyValue=TODAY_KEY){
+  const normalized=normalizeTaskBuckets(tasks||DEF_TASKS).tasks;
+  const taskBlocks=['top3','enfoque','parking'].flatMap(lane=>(normalized[lane]||[])
+    .filter(t=>t&&!t.done&&t.startTime)
+    .map(t=>({time:t.startTime,title:t.text,type:'Tarea',key:`task-${t.id}`})));
+  const routineBlocks=(rutina||[]).filter(r=>r&&r.time).map(r=>({time:r.time,title:r.text,type:'Rutina',key:`routine-${r.id}`}));
+  const eventBlocks=getEventsForDate(calEvents||{},dateKeyValue).filter(ev=>ev&&ev.time)
+    .map(ev=>({time:ev.time,title:ev.title,type:eventTypeLabel(ev),key:`event-${ev.__baseKey}-${ev.id}`}));
+  return[...eventBlocks,...taskBlocks,...routineBlocks].sort((a,b)=>(a.time||'').localeCompare(b.time||'')||(a.title||'').localeCompare(b.title||''));
 }
 
 // ── Rollover: pull undone tasks from previous days into today ─────────────────
@@ -1743,10 +1897,32 @@ function shiftDateKey(key,delta){
   return dateKey(d.getFullYear(),d.getMonth(),d.getDate());
 }
 function fmtFromKey(key){return fmtToday(parseDateKeyLocal(key));}
+function scoreForDateKey(key){
+  if(isWeekendKey(key))return null;
+  const d=readDayData(key);
+  return calcScore(d.habits,d.tasks,d.mental);
+}
+function recentScoreContext(endKey=TODAY_KEY,lookback=5){
+  const days=[];
+  let cursor=endKey;
+  for(let guard=0;days.length<lookback&&guard<18;guard++){
+    cursor=shiftDateKey(cursor,-1);
+    if(isWeekendKey(cursor))continue;
+    const score=scoreForDateKey(cursor);
+    if(score!==null)days.push({key:cursor,score});
+  }
+  const weak=days.filter(d=>d.score<6).length;
+  let priorGoodRun=0;
+  for(const day of days){
+    if(day.score>=6)priorGoodRun++;
+    else break;
+  }
+  return{days,weak,priorGoodRun};
+}
 
-function HoyScreen({habits,setHabits,setHabitTemplate,tasks,setTasks,mental,setMental,rutina,setRutina,streak,onSettings,showCompletedTasks=true}){
+function HoyScreen({habits,setHabits,setHabitTemplate,tasks,setTasks,mental,setMental,rutina,setRutina,streak,onSettings,showCompletedTasks=true,calEvents=DEF_CAL_EVENTS,softMode=true}){
   const isD=useD();
-  const[tab,setTab]=useLS('zp_hoy_tab','dashboard');
+  const[tab,setTab]=useLS('zp_hoy_tab','ahora');
   const[viewDate,setViewDate]=useState(TODAY_KEY);
   const scrollRef=useRef(null);
   const isToday=viewDate===TODAY_KEY;
@@ -1756,7 +1932,7 @@ function HoyScreen({habits,setHabits,setHabitTemplate,tasks,setTasks,mental,setM
   const vMental=isToday?mental:past.mental;
   const vRutina=isToday?rutina:past.rutina;
   const score=useMemo(()=>isWeekendKey(viewDate)?null:calcScore(vHabits,vTasks,vMental),[viewDate,vHabits,vTasks,vMental]);
-  const HTABS=[{id:'dashboard',label:'Dashboard'},{id:'tareas',label:'Tareas'},
+  const HTABS=[{id:'ahora',label:'Ahora'},{id:'dashboard',label:'Dashboard'},{id:'tareas',label:'Tareas'},
     {id:'habitos',label:'Hábitos'},{id:'rutina',label:'Rutina'},{id:'mental',label:'Mental'}];
   const readOnly=!isToday;
   useEffect(()=>{
@@ -1807,6 +1983,8 @@ function HoyScreen({habits,setHabits,setHabitTemplate,tasks,setTasks,mental,setM
       flex:1,minHeight:0,paddingBottom:8,opacity:readOnly?0.96:1,
       overflowY:'auto',WebkitOverflowScrolling:'touch',touchAction:'pan-y',
     }}>
+      {tab==='ahora'&&<HoyAhora tasks={vTasks} setTasks={readOnly?NOOP:setTasks} habits={vHabits} setHabits={readOnly?NOOP:setHabits}
+        rutina={vRutina} setRutina={readOnly?NOOP:setRutina} calEvents={calEvents} readOnly={readOnly} softMode={softMode}/>}
       {tab==='dashboard'&&<HoyDashboard score={score} habits={vHabits} setHabits={readOnly?NOOP:setHabits} tasks={vTasks} setTasks={readOnly?NOOP:setTasks} mental={vMental} streak={streak} readOnly={readOnly}/>}
       {tab==='tareas'&&<HoyTareas tasks={vTasks} setTasks={readOnly?NOOP:setTasks} readOnly={readOnly} showCompleted={showCompletedTasks}/>}
       {tab==='habitos'&&<HoyHabitos habits={vHabits} setHabits={readOnly?NOOP:setHabits} setHabitTemplate={readOnly?NOOP:setHabitTemplate} readOnly={readOnly}/>}
@@ -1816,14 +1994,259 @@ function HoyScreen({habits,setHabits,setHabitTemplate,tasks,setTasks,mental,setM
   </div>;
 }
 
+function HoyAhora({tasks,setTasks,habits,setHabits,rutina,setRutina,calEvents,readOnly=false,softMode=true}){
+  const isD=useD();
+  const px=isD?52:14;
+  const[skipTick,setSkipTick]=useState(0);
+	  const focus=useFocusSession();
+	  const actions=useMemo(()=>getTodayActions(tasks,habits,rutina,TODAY_KEY),[tasks,habits,rutina,skipTick]);
+	  const active=actions[0]||null;
+	  const[focusMinutes,setFocusMinutes]=useState(()=>active?getActionDuration(active):25);
+	  const nextActions=actions.slice(1,4);
+	  const timeline=useMemo(()=>dailyTimeline(calEvents,tasks,rutina,TODAY_KEY),[calEvents,tasks,rutina]);
+  const routineItems=Array.isArray(rutina)?rutina:[];
+  const routineActions=useMemo(()=>sortActionsWithSkipped(
+    routineItems.filter(r=>!r.done).map(r=>makeAction('routine',r,{kindLabel:'Rutina'})),
+    TODAY_KEY,
+  ),[rutina,skipTick]);
+  const routineStepAction=routineActions[0]||null;
+  const routineStep=routineStepAction?.item||null;
+  const routineIndex=routineStep?routineItems.findIndex(r=>String(r.id)===String(routineStep.id)):-1;
+	  const session=focus.session;
+	  const sessionAction=session?actions.find(a=>a.key===session.id):active;
+	  const durationSeconds=(session?.durationMinutes||active?.durationMinutes||25)*60;
+	  const remaining=session?session.remainingSeconds:durationSeconds;
+	  const progress=session?Math.max(0,Math.min(1,1-(remaining/durationSeconds))):0;
+	  const showFocus=!!session&&session.status!=='done';
+
+	  useEffect(()=>{
+	    if(active)setFocusMinutes(getActionDuration(active));
+	  },[active?.key]);
+
+  function actionLabel(action){
+    if(!action)return'';
+    if(action.type==='habit')return'Hábito';
+    if(action.type==='routine')return'Rutina';
+    if(action.type==='event')return'Evento';
+    return'Tarea';
+  }
+	  function startFocus(action){
+	    if(!action)return;
+	    const minutes=Math.max(1,Math.min(180,parseInt(focusMinutes,10)||getActionDuration(action)||25));
+	    focus.start(action,minutes);
+	  }
+	  function completeAction(action){
+	    if(!action||readOnly)return;
+	    if(action.type==='task'){
+	      setTasks(prev=>{
+	        const result=toggleTaskInBuckets(prev,action.lane,action.id,true,false);
+	        if(result.done)recordTaskCompletion(action.id,result.completedAt);
+	        return result.tasks;
+	      });
+	    }else if(action.type==='habit'){
+	      setHabits(prev=>(prev||[]).map(h=>String(h.id)===String(action.id)?{...h,done:true}:h));
+	    }else if(action.type==='routine'){
+	      setRutina(prev=>(prev||[]).map(r=>String(r.id)===String(action.id)?{...r,done:true}:r));
+	    }
+	    if(focus.session&&String(focus.session.id)===String(action.key))focus.finish();
+	  }
+  function skipAction(action){
+    if(!action)return;
+    const ids=skippedToday(TODAY_KEY);
+    saveSkippedToday([...ids,action.key],TODAY_KEY);
+    setSkipTick(v=>v+1);
+  }
+  function clearSkipped(){
+    saveSkippedToday([],TODAY_KEY);
+    setSkipTick(v=>v+1);
+  }
+  const btn=(label,onClick,{primary=false,disabled=false}={})=><button onClick={onClick} disabled={disabled||readOnly}
+    style={{padding:isD?'9px 14px':'8px 12px',borderRadius:12,background:primary?'var(--accent)':'var(--fill-1)',
+      color:primary?'var(--accent-ink)':'var(--text-2)',fontSize:13,fontWeight:700,
+      opacity:disabled||readOnly?0.5:1,cursor:disabled||readOnly?'default':'pointer',whiteSpace:'nowrap'}}>
+    {label}
+  </button>;
+  const metaPill=(children)=><span style={{fontSize:12,fontWeight:700,color:'var(--text-3)',background:'var(--fill-1)',
+    padding:'5px 9px',borderRadius:999}}>{children}</span>;
+
+  return<div style={{padding:`0 ${px}px 24px`,display:'flex',flexDirection:'column',gap:isD?16:12,maxWidth:900,margin:'0 auto',width:'100%'}}>
+    <div style={{padding:'0 2px'}}>
+      <div style={{fontSize:13,fontWeight:700,color:'var(--accent)',letterSpacing:0.8,textTransform:'uppercase'}}>Hoy, {fmtToday(TODAY)}</div>
+      <div style={{fontFamily:'ui-rounded,-apple-system,system-ui',fontSize:isD?34:26,fontWeight:750,color:'var(--text-1)',letterSpacing:-0.7,marginTop:4}}>
+        ¿Qué toca ahora?
+      </div>
+    </div>
+
+    <Card radius={24} padding={isD?24:18} style={{background:'linear-gradient(180deg,var(--surface-1),var(--surface-ink))'}}>
+      <div style={{display:'flex',justifyContent:'space-between',gap:14,alignItems:'flex-start',flexWrap:'wrap'}}>
+        <div style={{minWidth:0,flex:1}}>
+          <div style={{fontSize:12,fontWeight:800,color:'var(--text-3)',letterSpacing:1,textTransform:'uppercase',marginBottom:10}}>Ahora</div>
+          {active?<>
+            <div style={{fontSize:isD?30:23,fontWeight:800,color:'var(--text-1)',letterSpacing:-0.5,lineHeight:1.15}}>
+              {active.item?.emoji&&<span style={{marginRight:8}}>{active.item.emoji}</span>}{active.title}
+            </div>
+	            <div style={{display:'flex',gap:7,flexWrap:'wrap',marginTop:12}}>
+	              {metaPill(actionLabel(active))}
+	              {active.startTime&&metaPill(active.startTime)}
+	            </div>
+          </>:<>
+            <div style={{fontSize:isD?25:20,fontWeight:750,color:'var(--text-1)',letterSpacing:-0.3}}>Elige una acción pequeña para empezar.</div>
+            <div style={{fontSize:14,color:'var(--text-3)',lineHeight:1.5,marginTop:8}}>Puedes empezar suave y ajustar el plan después.</div>
+          </>}
+	        </div>
+	        <div style={{display:'flex',gap:8,flexWrap:'wrap',justifyContent:isD?'flex-end':'flex-start'}}>
+	          {active?<>
+	            <label style={{height:isD?36:34,padding:'0 10px',borderRadius:12,background:'var(--fill-1)',
+	              display:'flex',alignItems:'center',gap:6,color:'var(--text-2)',fontSize:13,fontWeight:700}}>
+	              <input type="number" min="1" max="180" value={focusMinutes}
+	                onChange={e=>setFocusMinutes(e.target.value)}
+	                onBlur={()=>setFocusMinutes(v=>Math.max(1,Math.min(180,parseInt(v,10)||getActionDuration(active)||25)))}
+	                style={{width:42,border:'none',outline:'none',background:'transparent',color:'var(--text-1)',
+	                  fontSize:13,fontWeight:800,fontFamily:'inherit',textAlign:'right',padding:0}}/>
+	              min
+	            </label>
+	            {btn('Iniciar focus',()=>startFocus(active),{primary:true})}
+	            {btn('Completar',()=>completeAction(active))}
+	            {btn(softMode?'Seguir luego':'Saltar',()=>skipAction(active))}
+	          </>:btn('Sugerir siguiente acción',clearSkipped,{primary:true})}
+	        </div>
+	      </div>
+	    </Card>
+	
+	    {showFocus&&<Card radius={22} padding={isD?18:14}>
+	      <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',gap:12,marginBottom:12}}>
+	        <div>
+	          <div style={{fontSize:15,fontWeight:800,color:'var(--text-1)'}}>Focus</div>
+	          <div style={{fontSize:12,color:'var(--text-3)',marginTop:2}}>{session?.title||active?.title||'Prepara un bloque corto'}</div>
+	        </div>
+	      </div>
+	      <div style={{fontFamily:'ui-rounded,-apple-system,system-ui',fontSize:isD?48:38,fontWeight:800,color:'var(--text-1)',letterSpacing:-1.2,lineHeight:1}}>
+	        {formatFocusTime(remaining)}
+      </div>
+      <div style={{height:8,borderRadius:999,background:'var(--fill-1)',overflow:'hidden',margin:'14px 0'}}>
+        <div style={{height:'100%',width:`${progress*100}%`,background:'var(--accent)',borderRadius:999,transition:'width 0.2s'}}/>
+      </div>
+      <div style={{display:'flex',gap:8,flexWrap:'wrap'}}>
+        {!session&&btn('Iniciar',()=>active&&focus.start(active),{primary:true,disabled:!active})}
+        {session?.status==='idle'&&btn('Iniciar',focus.resume,{primary:true})}
+        {session?.status==='running'&&btn('Pausar',focus.pause)}
+        {session?.status==='paused'&&btn('Iniciar',focus.resume,{primary:true})}
+        {session&&btn('Reiniciar',focus.reset)}
+        {session&&btn('+5 min',()=>focus.addMinutes(5))}
+        {session&&btn('Terminar',focus.finish)}
+	      </div>
+	    </Card>}
+
+    <Card radius={22} padding={0}>
+      <div style={{padding:'15px 16px 8px',display:'flex',justifyContent:'space-between',alignItems:'center'}}>
+        <div style={{fontSize:16,fontWeight:800,color:'var(--text-1)'}}>Siguiente</div>
+        <span style={{fontSize:12,color:'var(--text-3)'}}>{nextActions.length} acciones</span>
+      </div>
+      {nextActions.length===0&&<div style={{padding:'18px 16px 22px',fontSize:14,color:'var(--text-3)',fontStyle:'italic'}}>
+        {active?'Después de esto, revisamos otra acción.':'No hay acciones pendientes por ahora.'}
+      </div>}
+      {nextActions.map((a,i)=><div key={a.key} style={{display:'flex',alignItems:'center',gap:12,padding:'12px 16px',
+        borderTop:i>0?'0.5px solid var(--separator)':'none'}}>
+        <div style={{width:26,height:26,borderRadius:13,background:'var(--fill-1)',display:'flex',alignItems:'center',justifyContent:'center',
+          color:'var(--accent)',fontSize:12,fontWeight:800}}>{i+1}</div>
+        <div style={{flex:1,minWidth:0}}>
+          <div style={{fontSize:14,fontWeight:700,color:'var(--text-1)',letterSpacing:-0.15,whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{a.title}</div>
+          <div style={{fontSize:12,color:'var(--text-3)',marginTop:2}}>{actionLabel(a)} · {getActionDuration(a)} min</div>
+        </div>
+        {btn('Empezar',()=>focus.start(a))}
+      </div>)}
+    </Card>
+
+    <div style={{display:isD?'grid':'flex',gridTemplateColumns:'1fr 1fr',flexDirection:'column',gap:isD?16:12}}>
+      <Card radius={22} padding={0}>
+        <div style={{padding:'15px 16px 8px',fontSize:16,fontWeight:800,color:'var(--text-1)'}}>Plan del día</div>
+        {timeline.length===0&&<div style={{padding:'18px 16px 22px',fontSize:14,color:'var(--text-3)',fontStyle:'italic'}}>Aún no hay bloques con hora.</div>}
+        {timeline.slice(0,8).map((b,i)=><div key={b.key} style={{display:'grid',gridTemplateColumns:'54px 1fr',gap:10,padding:'10px 16px',
+          borderTop:i>0?'0.5px solid var(--separator)':'none',alignItems:'baseline'}}>
+          <div style={{fontSize:13,fontWeight:800,color:'var(--accent)'}}>{b.time}</div>
+          <div>
+            <div style={{fontSize:14,fontWeight:700,color:'var(--text-1)'}}>{b.title}</div>
+            <div style={{fontSize:11.5,color:'var(--text-3)',marginTop:1}}>{b.type}</div>
+          </div>
+        </div>)}
+      </Card>
+
+      <Card radius={22} padding={18}>
+        <div style={{fontSize:16,fontWeight:800,color:'var(--text-1)',marginBottom:12}}>Rutina guiada</div>
+        {routineStep?<>
+          <div style={{fontSize:12,fontWeight:800,color:'var(--accent)',letterSpacing:0.6,textTransform:'uppercase',marginBottom:8}}>
+            Paso {routineIndex+1}/{routineItems.length}
+          </div>
+          <div style={{fontSize:isD?22:19,fontWeight:800,color:'var(--text-1)',letterSpacing:-0.3,lineHeight:1.25}}>
+            {routineStep.text}
+          </div>
+          {routineStep.time&&<div style={{fontSize:13,color:'var(--text-3)',marginTop:6}}>{routineStep.time}</div>}
+          <div style={{display:'flex',gap:8,marginTop:16,flexWrap:'wrap'}}>
+            {btn('Hecho',()=>completeAction(routineStepAction),{primary:true})}
+            {btn(softMode?'Seguir luego':'Saltar',()=>skipAction(routineStepAction))}
+          </div>
+        </>:<div style={{fontSize:14,color:'var(--text-3)',fontStyle:'italic'}}>Rutina completada</div>}
+      </Card>
+    </div>
+  </div>;
+}
+
 function HoyDashboard({score,habits,setHabits,tasks,setTasks,mental,streak,readOnly=false}){
   const isD=useD();
   const doneH=habits.filter(h=>h.done).length;
   const mentalGood=mental.filter(m=>m.state==='bien').length;
   const mentalMarked=mental.filter(m=>m.state==='bien'||m.state==='mal').length;
-  const mentalScore=mentalMarked>0?+(mentalGood/mentalMarked*10).toFixed(1):0;
-  const top3Done=tasks.top3.filter(t=>t.done).length;
-  const px=isD?52:14;
+	  const mentalScore=mentalMarked>0?+(mentalGood/mentalMarked*10).toFixed(1):0;
+	  const top3Done=tasks.top3.filter(t=>t.done).length;
+	  const px=isD?52:14;
+	  const streakCount=parseInt(streak,10)||0;
+	  const recent=useMemo(()=>recentScoreContext(TODAY_KEY,5),[score]);
+	  const hasRealStreak=streakCount>=2&&score>=6;
+	  function dashboardNudge(){
+	    const current=score==null?null:Number(score);
+	    const recentLine=recent.days.length
+	      ?`Últimos ${recent.days.length} días evaluables: ${recent.weak} flojo${recent.weak===1?'':'s'} por debajo de 6.`
+	      :'Aún no hay historial suficiente para comparar.';
+	    if(current===null)return{
+	      title:'Sin score todavía',
+	      body:'Marca hábitos para que esto deje de ser decoración y empiece a decirte la verdad.',
+	      tone:'var(--accent)',
+	      soft:'var(--accent-soft)',
+	    };
+	    if(hasRealStreak)return{
+	      title:'Ahora sí: estás en racha',
+	      body:`${streakCount} días seguidos con score ≥ 6. No lo sueltes por una tarde tonta.`,
+	      tone:'var(--sys-green)',
+	      soft:'var(--sys-green-soft)',
+	    };
+	    if(current>=8)return{
+	      title:'Buen día, falta continuidad',
+	      body:recent.priorGoodRun>0
+	        ?`Vas en ${current.toFixed(1)}/10. Repite esto mañana y ya empieza a oler a racha.`
+	        :`Vas en ${current.toFixed(1)}/10, pero vienes sin base sólida. Mañana decide si esto fue impulso o sistema.`,
+	      tone:'var(--sys-green)',
+	      soft:'var(--sys-green-soft)',
+	    };
+	    if(current>=6)return{
+	      title:'Cumples, pero no es racha',
+	      body:`Vas en ${current.toFixed(1)}/10. Bien, pero una racha empieza cuando lo repites, no cuando sale una vez.`,
+	      tone:'var(--sys-amber)',
+	      soft:'var(--sys-amber-soft)',
+	    };
+	    if(current<4)return{
+	      title:'Día de mierda, espabila',
+	      body:`Vas en ${current.toFixed(1)}/10. ${recentLine} Haz un hábito ahora y salva algo antes de cerrar el día.`,
+	      tone:'var(--sys-red)',
+	      soft:'var(--sys-red-soft)',
+	    };
+	    return{
+	      title:'Día flojo, toca reaccionar',
+	      body:`Vas en ${current.toFixed(1)}/10. ${recentLine} No negocies con todo: completa una cosa pequeña ya.`,
+	      tone:'var(--sys-red)',
+	      soft:'var(--sys-red-soft)',
+	    };
+	  }
+	  const nudge=dashboardNudge();
 
   const ScoreCard=<Card padding={0} radius={20} style={{overflow:'hidden'}}>
     <div style={{position:'relative',padding:isD?'22px 22px 18px':'14px 16px 12px',
@@ -1897,6 +2320,9 @@ function HoyDashboard({score,habits,setHabits,tasks,setTasks,mental,streak,readO
                 textDecoration:t.done?'line-through':'none',letterSpacing:-0.2}}>
                 {t.text}
               </div>
+              <div style={{marginTop:4,fontSize:isD?11.5:10.5,color:'var(--text-3)',fontWeight:600}}>
+                {t.durationMinutes||defaultTaskDuration('top3')} min{t.startTime?` · ${t.startTime}`:''}
+              </div>
               {subs.length>0&&<div style={{marginTop:4,fontSize:isD?11.5:10.5,color:'var(--text-3)'}}>
                 {subsDone}/{subs.length} subtareas
               </div>}
@@ -1963,16 +2389,18 @@ function HoyDashboard({score,habits,setHabits,tasks,setTasks,mental,streak,readO
     </div>
   </Card>;
 
-  const InsightBanner=<div style={{padding:'14px 16px',borderRadius:16,
-    background:'linear-gradient(135deg,var(--accent-soft),transparent)',
-    border:'0.5px solid var(--accent-soft-strong)',display:'flex',gap:12,alignItems:'flex-start'}}>
-    <div style={{flexShrink:0,width:30,height:30,borderRadius:9,background:'var(--accent)',color:'var(--accent-ink)',
-      display:'flex',alignItems:'center',justifyContent:'center'}}><ISparkle size={16}/></div>
-    <div>
-      <div style={{fontSize:13,fontWeight:600,color:'var(--text-1)',marginBottom:2}}>Vas en racha</div>
-      <div style={{fontSize:12,color:'var(--text-2)',lineHeight:1.4}}>{streak} días consecutivos con score ≥ 6.</div>
-    </div>
-  </div>;
+	  const InsightBanner=<div style={{padding:'14px 16px',borderRadius:16,
+	    background:`linear-gradient(135deg,${nudge.soft},transparent)`,
+	    border:`0.5px solid ${nudge.tone}`,display:'flex',gap:12,alignItems:'flex-start'}}>
+	    <div style={{flexShrink:0,width:30,height:30,borderRadius:9,background:nudge.tone,color:'var(--accent-ink)',
+	      display:'flex',alignItems:'center',justifyContent:'center'}}><ISparkle size={16}/></div>
+	    <div>
+	      <div style={{fontSize:13,fontWeight:700,color:'var(--text-1)',marginBottom:2}}>{nudge.title}</div>
+	      <div style={{fontSize:12,color:'var(--text-2)',lineHeight:1.4}}>
+	        {nudge.body}
+	      </div>
+	    </div>
+	  </div>;
 
   if(isD){
     return<div style={{padding:`0 ${px}px 24px`,display:'grid',gridTemplateColumns:'1.1fr 1fr 1fr',gap:20,alignItems:'start'}}>
@@ -1998,10 +2426,12 @@ function HoyTareas({tasks,setTasks,showCompleted=true,readOnly=false}){
   const isD=useD();
   const[newTask,setNewTask]=useLS('zp_draft_task','');
   const[newLane,setNewLane]=useLS('zp_draft_lane','enfoque');
+  const[newDuration,setNewDuration]=useState(defaultTaskDuration(newLane));
+  const[newStartTime,setNewStartTime]=useState('');
   const newLaneRef=useRef(newLane);
   useEffect(()=>{newLaneRef.current=newLane;},[newLane]);
   const taskDates=React.useMemo(()=>{try{const s=localStorage.getItem('zp_task_dates');return s?JSON.parse(s):{};}catch{return{};}},[]); // registry safe from Supabase overwrite
-  const[editTask,setEditTask]=useState({lane:null,id:null,val:''});
+  const[editTask,setEditTask]=useState({lane:null,id:null,val:'',durationMinutes:25,startTime:''});
   const[expanded,setExpanded]=useState({});
   const[newSub,setNewSub]=useState({});
   const[draggingTaskId,setDraggingTaskId]=useState(null);
@@ -2028,12 +2458,14 @@ function HoyTareas({tasks,setTasks,showCompleted=true,readOnly=false}){
     else clearTaskCompletion(id);
     return result.tasks;
   });}
-  function chooseNewLane(lane){newLaneRef.current=lane;setNewLane(lane);}
+  function chooseNewLane(lane){newLaneRef.current=lane;setNewLane(lane);setNewDuration(defaultTaskDuration(lane));}
   function addTask(){if(!newTask.trim())return;
     const lane=newLaneRef.current||newLane||'enfoque';
     if(lane==='top3'&&(activeTasks.top3||[]).length>=3){alert('Top 3 solo admite 3 tareas pendientes.');return;}
     const id='t'+Date.now();
-    setTasks(prev=>({...prev,[lane]:[...(prev[lane]||[]),makeTask(id,newTask.trim(),TODAY_KEY,lane)]}));setNewTask('');}
+    setTasks(prev=>({...prev,[lane]:[...(prev[lane]||[]),makeTask(id,newTask.trim(),TODAY_KEY,lane,{durationMinutes:newDuration,startTime:newStartTime})]}));
+    setNewTask('');setNewStartTime('');
+  }
   function saveDraggedTasks(next,movedId,toLane){
     tasksRef.current=next;
     setTasks(next);
@@ -2111,14 +2543,19 @@ function HoyTareas({tasks,setTasks,showCompleted=true,readOnly=false}){
     setDraggingTaskId(null);
   }
   function deleteTask(lane,id){recordTaskDelete(id);setTasks(prev=>({...prev,[lane]:prev[lane].filter(t=>t.id!==id)}));}
-  function startEdit(lane,id,text){setEditTask({lane,id,val:text});}
+  function startEdit(lane,task){setEditTask({lane,id:task.id,val:task.text,durationMinutes:task.durationMinutes||defaultTaskDuration(lane),startTime:task.startTime||''});}
   function commitEdit(){
     if(!editTask.id)return;
     if(editTask.val.trim())
-      setTasks(prev=>({...prev,[editTask.lane]:prev[editTask.lane].map(t=>t.id===editTask.id?touchTask({...t,text:editTask.val.trim()},editTask.lane):t)}));
+      setTasks(prev=>({...prev,[editTask.lane]:prev[editTask.lane].map(t=>t.id===editTask.id?touchTask({
+        ...t,
+        text:editTask.val.trim(),
+        durationMinutes:parseInt(editTask.durationMinutes,10)||defaultTaskDuration(editTask.lane),
+        startTime:editTask.startTime||'',
+      },editTask.lane):t)}));
     else
       {recordTaskDelete(editTask.id);setTasks(prev=>({...prev,[editTask.lane]:prev[editTask.lane].filter(t=>t.id!==editTask.id)}));}
-    setEditTask({lane:null,id:null,val:''});
+    setEditTask({lane:null,id:null,val:'',durationMinutes:25,startTime:''});
   }
   function toggleSub(lane,tid,sid){setTasks(prev=>({...prev,[lane]:prev[lane].map(t=>t.id===tid?touchTask({...t,subtasks:(t.subtasks||[]).map(s=>s.id===sid?{...s,done:!s.done}:s)},lane):t)}));}
   function addSub(lane,tid){const text=(newSub[tid]||'').trim();if(!text)return;
@@ -2160,14 +2597,25 @@ function HoyTareas({tasks,setTasks,showCompleted=true,readOnly=false}){
           {t.done&&<ICheck size={11}/>}
         </button>}
         {isEditing
-          ?<input autoFocus value={editTask.val} onChange={e=>setEditTask(ev=>({...ev,val:e.target.value}))}
-            onBlur={commitEdit} onKeyDown={e=>{if(e.key==='Enter')commitEdit();if(e.key==='Escape')setEditTask({lane:null,id:null,val:''});}}
-            style={{flex:1,fontSize:14,color:'var(--text-1)',background:'var(--fill-1)',border:'none',
-              outline:'none',borderRadius:7,padding:'3px 8px',fontFamily:'inherit'}}/>
-          :<div onDoubleClick={readOnly?undefined:()=>startEdit(laneId,t.id,t.text)}
+          ?<div style={{flex:1,display:'grid',gridTemplateColumns:isD?'1fr 92px 86px':'1fr',gap:6}}>
+            <input autoFocus value={editTask.val} onChange={e=>setEditTask(ev=>({...ev,val:e.target.value}))}
+              onKeyDown={e=>{if(e.key==='Enter')commitEdit();if(e.key==='Escape')setEditTask({lane:null,id:null,val:'',durationMinutes:25,startTime:''});}}
+              style={{width:'100%',fontSize:14,color:'var(--text-1)',background:'var(--fill-1)',border:'none',
+                outline:'none',borderRadius:7,padding:'5px 8px',fontFamily:'inherit'}}/>
+            <select value={editTask.durationMinutes} onChange={e=>setEditTask(ev=>({...ev,durationMinutes:parseInt(e.target.value,10)}))}
+              style={{width:'100%',fontSize:12,color:'var(--text-2)',background:'var(--fill-1)',border:'none',borderRadius:7,padding:'5px 6px',fontFamily:'inherit'}}>
+              {TASK_DURATION_OPTIONS.map(n=><option key={n} value={n}>{n} min</option>)}
+            </select>
+            <input type="time" value={editTask.startTime} onChange={e=>setEditTask(ev=>({...ev,startTime:e.target.value}))}
+              style={{width:'100%',fontSize:12,color:'var(--text-2)',background:'var(--fill-1)',border:'none',borderRadius:7,padding:'5px 6px',fontFamily:'inherit'}}/>
+          </div>
+          :<div onDoubleClick={readOnly?undefined:()=>startEdit(laneId,t)}
             style={{flex:1,fontSize:14,color:t.done?'var(--text-3)':'var(--text-1)',
               textDecoration:t.done?'line-through':'none',letterSpacing:-0.1,lineHeight:1.4}}>
             {t.text}
+            <span style={{marginLeft:6,fontSize:11,color:'var(--text-3)',fontWeight:600,whiteSpace:'nowrap'}}>
+              {t.durationMinutes||defaultTaskDuration(laneId)} min{t.startTime?` · ${t.startTime}`:''}
+            </span>
             {(()=>{const od=t.createdDate&&t.createdDate<TODAY_KEY?t.createdDate:(taskDates[t.id]&&taskDates[t.id]<TODAY_KEY?taskDates[t.id]:null);
               return od&&!t.done?<span style={{marginLeft:6,fontSize:10,fontWeight:700,color:'var(--sys-red)',
                 background:'var(--sys-red-soft)',borderRadius:4,padding:'1px 5px',whiteSpace:'nowrap'}}>
@@ -2175,6 +2623,10 @@ function HoyTareas({tasks,setTasks,showCompleted=true,readOnly=false}){
               </span>:null;})()}
             {subs.length>0&&<span style={{marginLeft:6,fontSize:11,color:'var(--text-3)',fontWeight:500}}>{subsDone}/{subs.length}</span>}
           </div>}
+        {isEditing&&<button onClick={commitEdit} style={{padding:'2px 7px',borderRadius:6,
+          background:'var(--accent)',color:'var(--accent-ink)',border:'none',cursor:'pointer',fontSize:11,fontWeight:700,lineHeight:1}}>
+          OK
+        </button>}
         <button onClick={()=>toggleExpand(t.id)} style={{padding:'2px 5px',borderRadius:6,
           background:'var(--fill-1)',border:'none',cursor:'pointer',fontSize:13,color:'var(--text-3)',lineHeight:1}}>
           {isExp?'▾':'▸'}
@@ -2227,11 +2679,21 @@ function HoyTareas({tasks,setTasks,showCompleted=true,readOnly=false}){
       <button onClick={addTask} style={{padding:'5px 12px',borderRadius:8,background:'var(--accent)',
         color:'var(--accent-ink)',fontSize:12,fontWeight:600,border:'none',cursor:'pointer'}}>Añadir</button>
     </div>
-    <div style={{display:'flex',gap:2,padding:'8px 10px'}}>
+    <div style={{display:'flex',gap:2,padding:'8px 10px 6px'}}>
       {LANES.map(l=><button key={l.id} onClick={()=>chooseNewLane(l.id)} style={{flex:1,padding:'5px 8px',
         borderRadius:8,fontSize:12,border:'none',cursor:'pointer',
         background:newLane===l.id?'var(--accent)':'var(--fill-1)',
         color:newLane===l.id?'var(--accent-ink)':'var(--text-3)',fontWeight:newLane===l.id?600:500}}>{l.label}</button>)}
+    </div>
+    <div style={{display:'grid',gridTemplateColumns:isD?'120px 120px 1fr':'1fr 1fr',gap:8,padding:'0 10px 10px'}}>
+      <select aria-label="Duración estimada" value={newDuration} onChange={e=>setNewDuration(parseInt(e.target.value,10))}
+        style={{width:'100%',fontSize:12,color:'var(--text-2)',background:'var(--fill-1)',
+          border:'none',borderRadius:8,padding:'7px 8px',fontFamily:'inherit'}}>
+        {TASK_DURATION_OPTIONS.map(n=><option key={n} value={n}>{n} min</option>)}
+      </select>
+      <input aria-label="Hora opcional" type="time" value={newStartTime} onChange={e=>setNewStartTime(e.target.value)}
+        style={{width:'100%',fontSize:12,color:'var(--text-2)',background:'var(--fill-1)',
+          border:'none',borderRadius:8,padding:'7px 8px',fontFamily:'inherit'}}/>
     </div>
   </Card>;
 
@@ -2938,17 +3400,22 @@ function _UnusedMensualScreen({dayTypes,setDayTypes}){
                 const cfg=c.type?DAY_TYPE_CFG[c.type]:null;
                 const wkOnly=!cfg&&c.weekend;
                 const accentCfg=cfg||(wkOnly?WEEKEND_CFG:null);
-                const col=accentCfg?accentCfg.color:c.score!==null?scoreHue(c.score):'var(--fill-1)';
-                const scoreCol=c.score!==null?scoreHue(c.score):null;
-                const bg=sel?'var(--accent)':accentCfg?accentCfg.soft:c.score!==null?scoreHueSoft(c.score):'var(--fill-1)';
-                const border=sel?'1.5px solid var(--accent)':c.today?'1.5px solid var(--accent)'
-                  :scoreCol?`1px solid ${scoreCol}`
-                  :`0.5px solid ${cfg?cfg.border:accentCfg?'var(--calendar-cell-border)':'var(--separator)'}`;
-                return<div key={i} onClick={()=>setSelDay(sel?null:c.d)}
-                  style={{aspectRatio:'1',background:bg,border,borderRadius:9,
-                    display:'flex',flexDirection:'column',justifyContent:'space-between',padding:isD?5:3,cursor:'pointer',minHeight:0}}>
-                  <div style={{fontSize:isD?11:10.5,fontWeight:sel||c.today?700:600,
-                    color:sel?'var(--accent-ink)':c.today?'var(--accent)':cfg?DAY_TYPE_SURFACE.text:accentCfg?accentCfg.color:'var(--text-2)',letterSpacing:-0.1,lineHeight:1}}>{c.d}</div>
+	                const col=accentCfg?accentCfg.color:c.score!==null?scoreHue(c.score):'var(--fill-1)';
+	                const scoreCol=c.score!==null?scoreHue(c.score):null;
+	                const bg=sel?'var(--accent)':accentCfg?accentCfg.soft:c.score!==null?scoreHueSoft(c.score):'var(--fill-1)';
+	                const border=sel?'1.5px solid var(--accent)':c.today?'1.5px solid var(--accent)'
+	                  :scoreCol?`1px solid ${scoreCol}`
+	                  :`0.5px solid ${cfg?cfg.border:accentCfg?'var(--calendar-cell-border)':'var(--separator)'}`;
+	                const excludedLine=accentCfg;
+	                return<div key={i} onClick={()=>setSelDay(sel?null:c.d)}
+	                  style={{aspectRatio:'1',background:bg,border,borderRadius:9,
+	                    display:'flex',flexDirection:'column',justifyContent:'space-between',padding:isD?5:3,cursor:'pointer',minHeight:0,
+	                    position:'relative',overflow:'hidden'}}>
+	                  {excludedLine&&<div style={{position:'absolute',left:'-18%',top:'50%',width:'136%',height:1,
+	                    background:sel?'var(--accent-ink)':excludedLine.color,opacity:sel?0.28:0.34,
+	                    transform:'rotate(-45deg)',transformOrigin:'center',pointerEvents:'none'}}/>}
+	                  <div style={{fontSize:isD?11:10.5,fontWeight:sel||c.today?700:600,
+	                    color:sel?'var(--accent-ink)':c.today?'var(--accent)':cfg?DAY_TYPE_SURFACE.text:accentCfg?accentCfg.color:'var(--text-2)',letterSpacing:-0.1,lineHeight:1}}>{c.d}</div>
                   {cfg
                     ?<div style={{display:'flex',justifyContent:'flex-end',color:cfg.color,lineHeight:1}}><cfg.Icon size={isD?10:9} sw={1.8}/></div>
                     :wkOnly
@@ -3042,6 +3509,8 @@ function AgendaScreen({dayTypes,setDayTypes,calEvents,setCalEvents}){
   const[newRepeatEvery,setNewRepeatEvery]=useState(1);
   const[newTaskText,setNewTaskText]=useState('');
   const[newTaskLane,setNewTaskLane]=useState('enfoque');
+  const[newTaskDuration,setNewTaskDuration]=useState(defaultTaskDuration('enfoque'));
+  const[newTaskStartTime,setNewTaskStartTime]=useState('');
   const[editTime,setEditTime]=useState('');
   const[editTitle,setEditTitle]=useState('');
   const[editColor,setEditColor]=useState('#3B82F6');
@@ -3126,7 +3595,7 @@ function AgendaScreen({dayTypes,setDayTypes,calEvents,setCalEvents}){
     setNewTitle('');setNewTime('');setNewColor('#3B82F6');setNewType('recordatorio');setNewRemind(false);setNewRepeatUnit('none');setNewRepeatEvery(1);
   }
   function resetTaskForm(){
-    setNewTaskText('');setNewTaskLane('enfoque');
+    setNewTaskText('');setNewTaskLane('enfoque');setNewTaskDuration(defaultTaskDuration('enfoque'));setNewTaskStartTime('');
   }
   function closeEditor(){
     setEditingId('');setEditingBaseKey('');
@@ -3149,7 +3618,10 @@ function AgendaScreen({dayTypes,setDayTypes,calEvents,setCalEvents}){
     const id='t'+Date.now();
     writeTasksForDate(selKey,prev=>({
       ...prev,
-      [newTaskLane]:[...(prev[newTaskLane]||[]),makeTask(id,newTaskText.trim(),selKey,newTaskLane)],
+      [newTaskLane]:[...(prev[newTaskLane]||[]),makeTask(id,newTaskText.trim(),selKey,newTaskLane,{
+        durationMinutes:newTaskDuration,
+        startTime:newTaskStartTime,
+      })],
     }));
     resetTaskForm();
     setAddingTask(false);
@@ -3248,16 +3720,21 @@ function AgendaScreen({dayTypes,setDayTypes,calEvents,setCalEvents}){
         const sel=c.d===selDay;
         const cfg=c.type?DAY_TYPE_CFG[c.type]:null;
         const wkOnly=!cfg&&c.weekend;
-        const scoreCol=c.score!==null?scoreHue(c.score):null;
-        const cellBg=sel?'var(--accent)':c.today?'var(--fill-2)':cfg?cfg.soft:'var(--calendar-cell-bg)';
-        const cellBorder=sel?'1.5px solid var(--accent)':c.today?'1.5px solid var(--accent)'
-          :cfg?`1px solid ${cfg.border}`:'1px solid var(--calendar-cell-border)';
-        const accentLine=sel?'transparent':cfg?cfg.color:scoreCol||'transparent';
-        return<div key={i} onClick={()=>setSelDay(c.d)}
-          style={{aspectRatio:'1',background:cellBg,border:cellBorder,borderRadius:10,
-            display:'flex',flexDirection:'column',justifyContent:'space-between',padding:isD?7:4,cursor:'pointer',minHeight:0,
-            boxShadow:accentLine!=='transparent'?`inset 0 -3px 0 ${accentLine}`:'none'}}>
-          <div style={{display:'flex',justifyContent:'space-between',alignItems:'flex-start',gap:2}}>
+	        const scoreCol=c.score!==null?scoreHue(c.score):null;
+	        const cellBg=sel?'var(--accent)':c.today?'var(--fill-2)':cfg?cfg.soft:'var(--calendar-cell-bg)';
+	        const cellBorder=sel?'1.5px solid var(--accent)':c.today?'1.5px solid var(--accent)'
+	          :cfg?`1px solid ${cfg.border}`:'1px solid var(--calendar-cell-border)';
+	        const accentLine=sel?'transparent':cfg?cfg.color:scoreCol||'transparent';
+	        const excludedLine=cfg||(wkOnly?WEEKEND_CFG:null);
+	        return<div key={i} onClick={()=>setSelDay(c.d)}
+	          style={{aspectRatio:'1',background:cellBg,border:cellBorder,borderRadius:10,
+	            display:'flex',flexDirection:'column',justifyContent:'space-between',padding:isD?7:4,cursor:'pointer',minHeight:0,
+	            boxShadow:accentLine!=='transparent'?`inset 0 -3px 0 ${accentLine}`:'none',
+	            position:'relative',overflow:'hidden'}}>
+	          {excludedLine&&<div style={{position:'absolute',left:'-18%',top:'50%',width:'136%',height:1,
+	            background:sel?'var(--accent-ink)':excludedLine.color,opacity:sel?0.28:0.34,
+	            transform:'rotate(-45deg)',transformOrigin:'center',pointerEvents:'none'}}/>}
+	          <div style={{display:'flex',justifyContent:'space-between',alignItems:'flex-start',gap:2}}>
             <div style={{fontSize:isD?12:10.5,fontWeight:sel||c.today?700:600,
               color:sel?'var(--accent-ink)':c.today?'var(--accent)':'var(--text-1)',letterSpacing:-0.1,lineHeight:1}}>{c.d}</div>
             {cfg&&<span style={{display:'flex',color:cfg.color,lineHeight:1,background:'var(--fill-1)',borderRadius:999,padding:2}}>
@@ -3384,18 +3861,28 @@ function AgendaScreen({dayTypes,setDayTypes,calEvents,setCalEvents}){
 
     {addingTask&&<Card radius={16} padding={14}>
       <div style={{fontSize:13,fontWeight:700,color:'var(--text-1)',marginBottom:10}}>Tarea para {selLabel.toLowerCase()}</div>
-      <div style={{display:isD?'grid':'grid',gridTemplateColumns:isD?'1fr 120px auto':'1fr',gap:8,marginBottom:10}}>
+      <div style={{display:'grid',gridTemplateColumns:'1fr',gap:8,marginBottom:10}}>
         <input value={newTaskText} onChange={e=>setNewTaskText(e.target.value)}
           onKeyDown={e=>e.key==='Enter'&&addAgendaTask()} placeholder="Qué quieres tener listo ese día…"
           style={{width:'100%',fontSize:14,color:'var(--text-1)',background:'var(--fill-1)',
             border:'0.5px solid var(--hairline)',borderRadius:8,padding:'9px 10px'}}/>
-        <select value={newTaskLane} onChange={e=>setNewTaskLane(e.target.value)}
+        <div style={{display:'grid',gridTemplateColumns:isD?'1fr 1fr':'1fr',gap:8}}>
+          <select value={newTaskLane} onChange={e=>{setNewTaskLane(e.target.value);setNewTaskDuration(defaultTaskDuration(e.target.value));}}
+            style={{width:'100%',fontSize:14,color:'var(--text-1)',background:'var(--fill-1)',
+              border:'0.5px solid var(--hairline)',borderRadius:8,padding:'9px 10px',fontFamily:'inherit'}}>
+            <option value="top3">Top 3</option>
+            <option value="enfoque">En Foco</option>
+            <option value="parking">Parking</option>
+          </select>
+          <select aria-label="Duración estimada" value={newTaskDuration} onChange={e=>setNewTaskDuration(parseInt(e.target.value,10))}
+            style={{width:'100%',fontSize:14,color:'var(--text-1)',background:'var(--fill-1)',
+              border:'0.5px solid var(--hairline)',borderRadius:8,padding:'9px 10px',fontFamily:'inherit'}}>
+            {TASK_DURATION_OPTIONS.map(n=><option key={n} value={n}>{n} min</option>)}
+          </select>
+        </div>
+        <input aria-label="Hora opcional" type="time" value={newTaskStartTime} onChange={e=>setNewTaskStartTime(e.target.value)}
           style={{width:'100%',fontSize:14,color:'var(--text-1)',background:'var(--fill-1)',
-            border:'0.5px solid var(--hairline)',borderRadius:8,padding:'9px 10px',fontFamily:'inherit'}}>
-          <option value="top3">Top 3</option>
-          <option value="enfoque">En Foco</option>
-          <option value="parking">Parking</option>
-        </select>
+            border:'0.5px solid var(--hairline)',borderRadius:8,padding:'9px 10px',fontFamily:'inherit'}}/>
         <button onClick={addAgendaTask} style={{padding:'9px 14px',borderRadius:10,background:'var(--accent)',color:'var(--accent-ink)',
           fontSize:13,fontWeight:600,whiteSpace:'nowrap'}}>Guardar tarea</button>
       </div>
@@ -3528,6 +4015,8 @@ function AgendaScreen({dayTypes,setDayTypes,calEvents,setCalEvents}){
           <div style={{flex:1,minWidth:0}}>
             <div style={{display:'flex',alignItems:'center',gap:6,flexWrap:'wrap',marginBottom:2}}>
               <Chip tint={laneMeta.color} style={{fontSize:10,padding:'2px 7px'}}>{laneMeta.label}</Chip>
+              <Chip tint="var(--accent)" style={{fontSize:10,padding:'2px 7px'}}>{t.durationMinutes||defaultTaskDuration(t.__lane)} min</Chip>
+              {t.startTime&&<Chip tint="var(--text-3)" style={{fontSize:10,padding:'2px 7px'}}>{t.startTime}</Chip>}
             </div>
             <div style={{fontSize:15,fontWeight:500,color:t.done?'var(--text-3)':'var(--text-1)',
               textDecoration:t.done?'line-through':'none',letterSpacing:-0.2}}>{t.text}</div>
@@ -3685,16 +4174,33 @@ function BlocNotasScreen({notebook,setNotebook,agendaNotes}){
     });
   }
   function selectPage(id){patchNotebook(n=>({...n,currentId:id}));}
-  function addPage(){
-    patchNotebook(n=>{
-      const page=makeNotebookPage((n.pages||[]).length+1);
-      return{pages:[...(n.pages||[]),page],currentId:page.id};
-    });
-  }
-  function renamePage(title){
-    if(!current)return;
-    const clean=title.trim()||`Página ${currentIndex+1}`;
-    patchNotebook(n=>({...n,pages:n.pages.map(p=>p.id===current.id?{...p,title:clean,updatedAt:new Date().toISOString()}:p)}));
+	  function addPage(){
+	    patchNotebook(n=>{
+	      const page=makeNotebookPage((n.pages||[]).length+1);
+	      return{pages:[...(n.pages||[]),page],currentId:page.id};
+	    });
+	  }
+	  function deletePage(id=current?.id){
+	    if(!id)return;
+	    const page=pages.find(p=>p.id===id);
+	    const label=page?.title||'esta página';
+	    if(!window.confirm(`¿Borrar "${label}"? Esta acción no se puede deshacer.`))return;
+	    patchNotebook(n=>{
+	      const list=n.pages||[];
+	      const idx=Math.max(0,list.findIndex(p=>p.id===id));
+	      const nextPages=list.filter(p=>p.id!==id);
+	      if(nextPages.length===0){
+	        const first=makeNotebookPage(1);
+	        return{pages:[first],currentId:first.id};
+	      }
+	      const nextCurrent=nextPages[Math.min(idx,nextPages.length-1)]?.id||nextPages[0]?.id||null;
+	      return{pages:nextPages,currentId:nextCurrent};
+	    });
+	  }
+	  function renamePage(title){
+	    if(!current)return;
+	    const clean=title.trim()||`Página ${currentIndex+1}`;
+	    patchNotebook(n=>({...n,pages:n.pages.map(p=>p.id===current.id?{...p,title:clean,updatedAt:new Date().toISOString()}:p)}));
   }
   function saveEditor(){
     if(!current||!editorRef.current)return;
@@ -3742,12 +4248,17 @@ function BlocNotasScreen({notebook,setNotebook,agendaNotes}){
 
         <Card radius={22} padding={isD?18:14}>
           {current&&<>
-            <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',gap:12,marginBottom:12,flexWrap:'wrap'}}>
-              <input value={current.title} onChange={e=>renamePage(e.target.value)}
-                style={{flex:1,minWidth:160,fontSize:isD?20:17,fontWeight:700,color:'var(--text-1)',letterSpacing:-0.3,
-                  background:'transparent',border:'none',outline:'none',fontFamily:'inherit'}}/>
-              <Chip tint="var(--accent)">Página {currentIndex+1}</Chip>
-            </div>
+	            <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',gap:12,marginBottom:12,flexWrap:'wrap'}}>
+	              <input value={current.title} onChange={e=>renamePage(e.target.value)}
+	                style={{flex:1,minWidth:160,fontSize:isD?20:17,fontWeight:700,color:'var(--text-1)',letterSpacing:-0.3,
+	                  background:'transparent',border:'none',outline:'none',fontFamily:'inherit'}}/>
+	              <Chip tint="var(--accent)">Página {currentIndex+1}</Chip>
+	              <button onClick={()=>deletePage()} title="Borrar página" aria-label="Borrar página"
+	                style={{width:32,height:32,borderRadius:16,background:'var(--fill-1)',color:'var(--text-3)',
+	                  display:'flex',alignItems:'center',justifyContent:'center',flexShrink:0}}>
+	                <IClose size={13}/>
+	              </button>
+	            </div>
             <div style={{display:'flex',alignItems:'center',gap:8,flexWrap:'wrap',marginBottom:12}}>
               <span style={{fontSize:12,color:'var(--text-3)',fontWeight:600}}>Subrayar</span>
               {HIGHLIGHT_COLORS.map(c=><button key={c.id} title={c.label} onClick={()=>highlight(c.color)}
@@ -4520,7 +5031,7 @@ function IdeasScreen({ideas,setIdeas,library,setLibrary}){
   const isD=useD();
   const[newTitle,setNewTitle]=useState('');
   const[adding,setAdding]=useState(false);
-  const[section,setSection]=useState('ideas');
+  const[section,setSection]=useState('contenido');
   function addIdea(){if(!newTitle.trim())return;
     setIdeas(prev=>[{id:'i'+Date.now(),title:newTitle.trim(),desc:'',status:'inbox',
       prio:'media',createdAt:Date.now()},...prev]);setNewTitle('');setAdding(false);}
@@ -5260,6 +5771,7 @@ function AjustesScreen({theme,setTheme,accent,setAccent,onBack,user,onSignOut,si
   const isD=useD();
   const px=isD?52:14;
   const[settings,setSettings]=useLS('zp_settings',{habitGoal:80,showCompleted:true,defaultLane:'enfoque'});
+  const[softMode,setSoftMode]=useLS('zp_soft_mode',true);
   const[syncing,setSyncing]=useState(false);
   const[syncMsg,setSyncMsg]=useState('');
   const[pwMsg,setPwMsg]=useState('');
@@ -5471,6 +5983,15 @@ function AjustesScreen({theme,setTheme,accent,setAccent,onBack,user,onSignOut,si
                 <div style={{fontSize:12,color:'var(--text-3)',marginTop:1}}>Visible en la vista de tareas</div>
               </div>
               <Toggle value={s.showCompleted!==false} onChange={v=>setSetting('showCompleted',v)}/>
+            </div>
+            {/* Modo suave */}
+            <div style={{padding:'14px 18px',borderBottom:'0.5px solid var(--separator)',
+              display:'flex',alignItems:'center',justifyContent:'space-between',gap:14}}>
+              <div>
+                <div style={{fontSize:15,fontWeight:500,color:'var(--text-1)'}}>Modo suave</div>
+                <div style={{fontSize:12,color:'var(--text-3)',marginTop:1}}>Reduce presión visual y mensajes más amables.</div>
+              </div>
+              <Toggle value={softMode!==false} onChange={setSoftMode}/>
             </div>
             {/* Lane por defecto */}
             <div style={{padding:'14px 18px'}}>
@@ -6012,6 +6533,7 @@ function AppContent({user,isDesktop,dark,theme,setTheme,accent,setAccent,onSignO
   const[ideas,setIdeas]=useLS('zp_ideas',DEF_IDEAS);
   const[library,setLibrary]=useLS('zp_library',DEF_LIBRARY);
   const[settings]=useLS('zp_settings',{habitGoal:80,showCompleted:true,defaultLane:'enfoque'});
+  const[softMode]=useLS('zp_soft_mode',true);
   const[agendaNotes,setAgendaNotes]=useLS('zp_agenda_notes',DEF_AGENDA_NOTES);
   const[notebook,setNotebook]=useLS('zp_notebook',DEF_NOTEBOOK);
   const[streak]=useLS('zp_streak',0);
@@ -6021,7 +6543,7 @@ function AppContent({user,isDesktop,dark,theme,setTheme,accent,setAccent,onSignO
 
   const screenProps={habits,setHabits,setHabitTemplate,tasks,setTasks,mental,setMental,rutina,setRutina,streak,ideas,setIdeas,library,setLibrary,
     agendaNotes,setAgendaNotes,notebook,setNotebook,theme,setTheme,accent,setAccent,
-    showCompletedTasks:(settings||{}).showCompleted!==false};
+    showCompletedTasks:(settings||{}).showCompleted!==false,calEvents,softMode};
 
   useEffect(()=>{
     const syncPush=()=>syncExistingPushSubscription().catch(err=>{
